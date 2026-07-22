@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PI Production Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#F6F1E7;--card:#FFFDF9;--line:#E9E0D0;--ink:#332A20;--muted:#8C7B63;--deep:#23392F;--green:#2E7D4F;--amber:#C98A12;--red:#B23A3A;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Work Sans',system-ui,sans-serif;font-size:14px}
+  .ribbon{height:8px;background:repeating-linear-gradient(135deg,#2E5E4E 0 18px,#3C7A65 18px 36px)}
+  .wrap{max-width:1250px;margin:0 auto;padding:18px 16px 70px}
+  h1{font-family:'Fraunces',serif;font-size:24px;margin:0;color:var(--deep)}
+  h2{font-family:'Fraunces',serif;font-size:18px;margin:0 0 12px;color:var(--deep)}
+  .muted{color:var(--muted);font-size:12.5px}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .between{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:14px}
+  button{font-family:inherit;font-size:13px;font-weight:600;border-radius:8px;padding:8px 14px;cursor:pointer;border:1.5px solid var(--deep);background:transparent;color:var(--deep)}
+  button.solid{background:var(--deep);color:#F6F1E7;border-color:var(--deep)}
+  button.tiny{padding:4px 9px;font-size:12px}
+  button:disabled{opacity:.5;cursor:default}
+  input,select,textarea{font-family:inherit;font-size:13px;padding:7px 9px;border:1.5px solid #E4DACC;border-radius:7px;background:#FFFDF9;color:var(--ink);outline:none;width:100%}
+  input:focus,select:focus{border-color:#2E5E4E}
+  label{display:block;font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;background:#F1EADC;padding:8px 10px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B5D49;position:sticky;top:0}
+  td{padding:6px 10px;border-top:1px solid #F0E9DB;vertical-align:middle}
+  tr.late td{background:#FBEDEA}
+  .scroll{overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:11px;background:var(--card)}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0}
+  .tabs button{border-color:var(--line);background:var(--card);color:#6B5D49}
+  .tabs button.on{background:var(--deep);color:#F6F1E7;border-color:var(--deep)}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+  .stat b{display:block;font-family:'Fraunces',serif;font-size:23px;color:var(--deep)}
+  .bar{height:8px;background:#EFE7D8;border-radius:99px;overflow:hidden;min-width:70px}
+  .bar span{display:block;height:100%;background:var(--green);border-radius:99px}
+  .pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:600;color:#fff}
+  .g{background:var(--green)}.a{background:var(--amber)}.r{background:var(--red)}.d{background:#8C7B63}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+  .msg{padding:9px 13px;border-radius:8px;font-size:13px;margin-bottom:12px}
+  .err{background:#F7E7E4;border:1px solid #E4BDB5;color:#8C3B2E}
+  .ok{background:#E7F0E9;border:1px solid #BFD8C6;color:#2E5E4E}
+  .num{width:74px}.dt{width:132px}
+  #login{max-width:330px;margin:16vh auto}
+</style>
+</head>
+<body>
+<div class="ribbon"></div>
+
+<div id="login" style="display:none">
+  <div class="card">
+    <h2>PI Production Tracker</h2>
+    <div id="loginErr"></div>
+    <label>Password</label>
+    <input id="pw" type="password" onkeydown="if(event.key==='Enter')login()" />
+    <button class="solid" style="width:100%;margin-top:10px" onclick="login()">Sign in</button>
+  </div>
+</div>
+
+<div class="wrap" id="app" style="display:none">
+  <div class="between">
+    <div><h1>PI Production Tracker</h1><div class="muted">Orders, vendors and timelines — live from your own database</div></div>
+    <button class="tiny" onclick="logout()">Sign out</button>
+  </div>
+
+  <div class="tabs">
+    <button data-t="orders" onclick="go('orders')">Orders</button>
+    <button data-t="late" onclick="go('late')">Late</button>
+    <button data-t="vendors" onclick="go('vendors')">Vendors</button>
+    <button data-t="buyers" onclick="go('buyers')">Buyers</button>
+    <button data-t="import" onclick="go('import')">Import from ERP</button>
+  </div>
+
+  <div id="msg"></div>
+  <div id="view"></div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let TAB = "orders", VENDORS = [], BUYERS = [], OPEN_PI = null, IMPORT = null;
+
+async function api(url, opts = {}) {
+  const r = await fetch("/api" + url, { headers: { "Content-Type": "application/json" }, ...opts });
+  if (r.status === 401) { showLogin(); throw new Error("Please sign in"); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || "Request failed");
+  return j;
+}
+function msg(text, cls = "ok") { $("#msg").innerHTML = text ? `<div class="msg ${cls}">${esc(text)}</div>` : ""; if (text) setTimeout(() => { if ($("#msg").textContent === text) $("#msg").innerHTML = ""; }, 4000); }
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function dmy(iso) { if (!iso) return ""; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y.slice(2)}`; }
+function bar(pct) { return `<div class="row" style="gap:6px"><div class="bar" style="flex:1"><span style="width:${pct}%"></span></div><span class="muted" style="min-width:32px">${pct}%</span></div>`; }
+function statusPill(s, days) {
+  if (!s) return "";
+  const map = { green: ["g", "On track"], amber: ["a", "Due soon"], red: ["r", "Last 5 days"], overdue: ["r", "OVERDUE"], done: ["d", "Complete"] };
+  const [c, t] = map[s] || ["d", s];
+  return `<span class="pill ${c}">${t}${s !== "done" && days != null ? " · " + (days < 0 ? -days + "d late" : days + "d") : ""}</span>`;
+}
+
+// ---------- auth ----------
+function showLogin() { $("#login").style.display = "block"; $("#app").style.display = "none"; }
+async function login() {
+  try {
+    await api("/login", { method: "POST", body: JSON.stringify({ password: $("#pw").value }) });
+    $("#loginErr").innerHTML = ""; boot();
+  } catch (e) { $("#loginErr").innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
+}
+async function logout() { await fetch("/api/logout", { method: "POST" }); showLogin(); }
+
+async function boot() {
+  try {
+    [VENDORS, BUYERS] = await Promise.all([api("/vendors"), api("/buyers")]);
+    $("#login").style.display = "none"; $("#app").style.display = "block";
+    go(TAB);
+  } catch (e) { showLogin(); }
+}
+function go(t) {
+  TAB = t;
+  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.t === t));
+  ({ orders: viewOrders, late: viewLate, vendors: viewVendors, buyers: viewBuyers, import: viewImport }[t])();
+}
+
+// ---------- orders ----------
+async function viewOrders() {
+  if (OPEN_PI) return viewSkus(OPEN_PI);
+  const [pis, dash] = await Promise.all([api("/pis"), api("/dashboard")]);
+  $("#view").innerHTML = `
+    <div class="stats">
+      <div class="card stat"><span class="muted">Active orders</span><b>${dash.active_orders}</b></div>
+      <div class="card stat"><span class="muted">Open SKUs</span><b>${dash.open_skus}</b></div>
+      <div class="card stat"><span class="muted">Late SKUs</span><b style="color:${dash.late_skus ? "var(--red)" : "var(--deep)"}">${dash.late_skus}</b></div>
+      <div class="card stat"><span class="muted">Pieces still due</span><b>${dash.pieces_due.toLocaleString("en-IN")}</b></div>
+    </div>
+    <div class="between" style="margin-bottom:8px"><h2>Active orders</h2>
+      <label class="row" style="gap:6px;text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--muted)">
+        <input type="checkbox" style="width:auto" id="showAll" onchange="viewOrdersAll(this.checked)"> show shipped
+      </label></div>
+    <div class="scroll"><table>
+      <thead><tr><th>PI</th><th>Buyer</th><th>PI date</th><th>Ex-factory</th><th>Ship</th><th>SKUs</th><th>Progress</th><th>Late</th><th></th></tr></thead>
+      <tbody>${pis.map(rowPI).join("") || `<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">No orders yet — import one from your ERP.</td></tr>`}</tbody>
+    </table></div>`;
+}
+async function viewOrdersAll(all) {
+  const pis = await api("/pis" + (all ? "?all=1" : ""));
+  document.querySelector("#view tbody").innerHTML = pis.map(rowPI).join("");
+}
+function rowPI(p) {
+  return `<tr>
+    <td><b>${esc(p.pi_no)}</b><div class="muted">${esc(p.po_no || "")}</div></td>
+    <td>${esc(p.buyer_name || "")}</td>
+    <td>${dmy(p.pi_date)}</td><td>${dmy(p.ex_factory_date)}</td><td>${dmy(p.ship_date)}</td>
+    <td>${p.sku_count}</td>
+    <td style="min-width:150px">${bar(p.progress_pct)}<div class="muted">${p.in_hand_qty}/${p.ordered_qty} pcs</div></td>
+    <td>${p.late_count ? `<span class="pill r">${p.late_count}</span>` : ""}</td>
+    <td class="row" style="gap:5px">
+      <button class="tiny" onclick="openPI(${p.id})">Open</button>
+      <button class="tiny" onclick="tickPI(${p.id},'packed')">${p.packed ? "✓" : ""} Packed</button>
+      <button class="tiny" onclick="tickPI(${p.id},'shipped')">${p.shipped ? "✓" : ""} Shipped</button>
+    </td></tr>`;
+}
+async function tickPI(id, field) {
+  await api("/pis/" + id, { method: "PATCH", body: JSON.stringify({ [field]: 1 }) });
+  msg("Order marked " + field); viewOrders();
+}
+function openPI(id) { OPEN_PI = id; viewSkus(id); }
+
+// ---------- SKUs ----------
+async function viewSkus(piId) {
+  const [skus, pis] = await Promise.all([api(`/pis/${piId}/skus`), api("/pis?all=1")]);
+  const pi = pis.find((p) => p.id === piId) || {};
+  const vopts = (sel) => `<option value=""></option>` + VENDORS.map((v) => `<option value="${v.id}"${sel == v.id ? " selected" : ""}>${esc(v.name)}${v.lead_time_days ? " (" + v.lead_time_days + "d)" : ""}</option>`).join("");
+  $("#view").innerHTML = `
+    <button class="tiny" onclick="OPEN_PI=null;viewOrders()">← All orders</button>
+    <div class="card" style="margin:10px 0">
+      <div class="between">
+        <div><h2 style="margin:0">PI ${esc(pi.pi_no || "")}</h2>
+          <div class="muted">${esc(pi.buyer_name || "")} · PO ${esc(pi.po_no || "—")} · PI ${dmy(pi.pi_date)} · Ex-factory ${dmy(pi.ex_factory_date)} · Ship ${dmy(pi.ship_date)}</div></div>
+        <div style="min-width:170px">${bar(pi.progress_pct || 0)}<div class="muted">${pi.in_hand_qty}/${pi.ordered_qty} pcs in hand</div></div>
+      </div>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr>
+        <th>Item</th><th>Desc</th><th>Qty</th>
+        <th>V1</th><th>V2</th><th>V3</th><th>V4</th><th>Due</th><th>Status</th>
+        <th>Recd</th><th>Date</th>
+        <th>Ret1</th><th>Back1</th><th>Ret2</th><th>Back2</th><th>Ret3</th><th>Back3</th>
+        <th>In hand</th><th>Still due</th><th>Progress</th>
+        <th>GB</th><th>Lbl</th><th>Ord</th><th>✓</th><th>Pk</th><th>Sh</th>
+      </tr></thead>
+      <tbody>${skus.map((s) => rowSku(s, vopts)).join("")}</tbody>
+    </table></div>
+    <div class="muted" style="margin-top:8px">Edits save as you type. Due date = PI date + that vendor's lead time.</div>`;
+}
+function rowSku(s, vopts) {
+  const n = (f) => `<input class="num" type="number" value="${s[f] ?? 0}" onchange="saveSku(${s.id},'${f}',this.value)">`;
+  const d = (f) => `<input class="dt" type="date" value="${s[f] || ""}" onchange="saveSku(${s.id},'${f}',this.value)">`;
+  const c = (f) => `<input type="checkbox" style="width:auto" ${s[f] ? "checked" : ""} onchange="saveSku(${s.id},'${f}',this.checked?1:0)">`;
+  const v = (f) => `<select style="min-width:110px" onchange="saveSku(${s.id},'${f}',this.value||null)">${vopts(s[f])}</select>`;
+  const dues = s.vendor_due.filter(Boolean).map((x) => `${x.slot}: ${dmy(x.due)}`).join("<br>");
+  return `<tr class="${s.late ? "late" : ""}">
+    <td><b>${esc(s.item_no)}</b><div class="muted">${esc(s.buyer_no || "")}</div></td>
+    <td>${esc(s.description || "")}</td><td>${s.qty}</td>
+    <td>${v("v1_id")}</td><td>${v("v2_id")}</td><td>${v("v3_id")}</td><td>${v("v4_id")}</td>
+    <td class="muted" style="font-size:11.5px">${dues}</td>
+    <td>${statusPill(s.status, s.days_left)}</td>
+    <td>${n("received_qty")}</td><td>${d("received_date")}</td>
+    <td>${n("r1_qty")}${d("r1_date")}</td><td>${n("r1_back_qty")}${d("r1_back_date")}</td>
+    <td>${n("r2_qty")}${d("r2_date")}</td><td>${n("r2_back_qty")}${d("r2_back_date")}</td>
+    <td>${n("r3_qty")}${d("r3_date")}</td><td>${n("r3_back_qty")}${d("r3_back_date")}</td>
+    <td><b>${s.in_hand}</b></td>
+    <td style="color:${s.still_due > 0 ? "var(--red)" : "var(--green)"}"><b>${s.still_due}</b></td>
+    <td style="min-width:120px">${bar(s.progress_pct)}</td>
+    <td>${c("gift_box")}</td><td>${c("labels_needed")}</td><td>${c("labels_ordered")}</td>
+    <td>${c("complete")}</td><td>${c("packed")}</td><td>${c("shipped")}</td>
+  </tr>`;
+}
+let saveTimer = null;
+async function saveSku(id, field, value) {
+  try {
+    await api("/skus/" + id, { method: "PATCH", body: JSON.stringify({ [field]: value }) });
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { if (OPEN_PI) viewSkus(OPEN_PI); }, 600);
+  } catch (e) { msg(e.message, "err"); }
+}
+
+// ---------- late ----------
+async function viewLate() {
+  const rows = await api("/late");
+  $("#view").innerHTML = `<h2>Late orders</h2>
+    ${rows.length ? "" : `<div class="card muted">Nothing is late. </div>`}
+    ${rows.length ? `<div class="scroll"><table>
+      <thead><tr><th>PI</th><th>Buyer</th><th>Item</th><th>Desc</th><th>Qty</th><th>Still due</th><th>Due</th><th>Status</th><th>Vendors</th><th></th></tr></thead>
+      <tbody>${rows.map((s) => `<tr class="late">
+        <td><b>${esc(s.pi ? s.pi.pi_no : "")}</b></td>
+        <td>${esc(s.pi ? s.pi.buyer_name || "" : "")}</td>
+        <td><b>${esc(s.item_no)}</b></td><td>${esc(s.description || "")}</td>
+        <td>${s.qty}</td><td><b style="color:var(--red)">${s.still_due}</b></td>
+        <td>${dmy(s.overall_due)}</td><td>${statusPill(s.status, s.days_left)}</td>
+        <td class="muted">${s.vendor_due.filter(Boolean).map((x) => esc(x.vendor) + " (" + dmy(x.due) + ")").join(", ")}</td>
+        <td><button class="tiny" onclick="openPI(${s.pi_id});go('orders')">Open PI</button></td>
+      </tr>`).join("")}</tbody></table></div>` : ""}`;
+}
+
+// ---------- masters ----------
+async function viewVendors() {
+  VENDORS = await api("/vendors");
+  $("#view").innerHTML = `<h2>Vendors</h2>
+    <div class="card" style="margin-bottom:12px">
+      <div class="grid2">
+        <div><label>Vendor name</label><input id="vn" placeholder="e.g. Sharma Woodworks"></div>
+        <div><label>Lead time (days)</label><input id="vl" type="number" placeholder="45"></div>
+        <div><label>Phone</label><input id="vp"></div>
+        <div style="display:flex;align-items:flex-end"><button class="solid" style="width:100%" onclick="addVendor()">Add vendor</button></div>
+      </div>
+      <div class="muted" style="margin-top:8px">Lead time drives every due date: PI date + lead time.</div>
+    </div>
+    <div class="scroll"><table><thead><tr><th>Name</th><th>Lead time (days)</th><th>Phone</th><th>Notes</th><th></th></tr></thead>
+    <tbody>${VENDORS.map((v) => `<tr>
+      <td><input value="${esc(v.name)}" onchange="saveVendor(${v.id},'name',this.value)"></td>
+      <td><input class="num" type="number" value="${v.lead_time_days || 0}" onchange="saveVendor(${v.id},'lead_time_days',this.value)"></td>
+      <td><input value="${esc(v.phone || "")}" onchange="saveVendor(${v.id},'phone',this.value)"></td>
+      <td><input value="${esc(v.notes || "")}" onchange="saveVendor(${v.id},'notes',this.value)"></td>
+      <td><button class="tiny" onclick="delVendor(${v.id})">Delete</button></td></tr>`).join("")}</tbody></table></div>`;
+}
+async function addVendor() {
+  try {
+    await api("/vendors", { method: "POST", body: JSON.stringify({ name: $("#vn").value, lead_time_days: $("#vl").value, phone: $("#vp").value }) });
+    msg("Vendor added"); viewVendors();
+  } catch (e) { msg(e.message, "err"); }
+}
+async function saveVendor(id, field, value) { await api("/vendors/" + id, { method: "PATCH", body: JSON.stringify({ [field]: value }) }); VENDORS = await api("/vendors"); msg("Saved"); }
+async function delVendor(id) { if (!confirm("Delete this vendor?")) return; await api("/vendors/" + id, { method: "DELETE" }); viewVendors(); }
+
+async function viewBuyers() {
+  BUYERS = await api("/buyers");
+  $("#view").innerHTML = `<h2>Buyers</h2>
+    <div class="card" style="margin-bottom:12px"><div class="grid2">
+      <div><label>Buyer name</label><input id="bn"></div>
+      <div><label>Contact person</label><input id="bc"></div>
+      <div><label>Email</label><input id="be"></div>
+      <div><label>Phone</label><input id="bp"></div>
+      <div style="grid-column:1/-1"><label>Address</label><input id="ba"></div>
+      <div><button class="solid" style="width:100%" onclick="addBuyer()">Add buyer</button></div>
+    </div></div>
+    <div class="scroll"><table><thead><tr><th>Name</th><th>Contact</th><th>Email</th><th>Phone</th><th>Address</th></tr></thead>
+    <tbody>${BUYERS.map((b) => `<tr>
+      <td><input value="${esc(b.name)}" onchange="saveBuyer(${b.id},'name',this.value)"></td>
+      <td><input value="${esc(b.contact || "")}" onchange="saveBuyer(${b.id},'contact',this.value)"></td>
+      <td><input value="${esc(b.email || "")}" onchange="saveBuyer(${b.id},'email',this.value)"></td>
+      <td><input value="${esc(b.phone || "")}" onchange="saveBuyer(${b.id},'phone',this.value)"></td>
+      <td><input value="${esc(b.address || "")}" onchange="saveBuyer(${b.id},'address',this.value)"></td></tr>`).join("")}</tbody></table></div>`;
+}
+async function addBuyer() {
+  try {
+    await api("/buyers", { method: "POST", body: JSON.stringify({ name: $("#bn").value, contact: $("#bc").value, email: $("#be").value, phone: $("#bp").value, address: $("#ba").value }) });
+    msg("Buyer added"); viewBuyers();
+  } catch (e) { msg(e.message, "err"); }
+}
+async function saveBuyer(id, field, value) { await api("/buyers/" + id, { method: "PATCH", body: JSON.stringify({ [field]: value }) }); msg("Saved"); }
+
+// ---------- import ----------
+function viewImport() {
+  $("#view").innerHTML = `<h2>Import from ERP</h2>
+    <div class="card">
+      <p class="muted" style="margin-top:0">Export the PI from your ERP as Excel or CSV, then choose the file here. Columns are matched automatically — you confirm before anything is saved.</p>
+      <input type="file" accept=".xlsx,.xls,.csv" onchange="preview(this.files[0])">
+      <div id="prev"></div>
+    </div>`;
+}
+async function preview(file) {
+  if (!file) return;
+  $("#prev").innerHTML = `<p class="muted">Reading ${esc(file.name)}…</p>`;
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const r = await fetch("/api/import/preview", { method: "POST", body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error);
+    IMPORT = j;
+    const opts = (sel) => `<option value=""></option>` + j.headers.map((h) => `<option${h === sel ? " selected" : ""}>${esc(h)}</option>`).join("");
+    $("#prev").innerHTML = `
+      <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+      <div class="grid2">
+        <div><label>PI number *</label><input id="i_pi" value="${esc(j.detected.pi_no)}"></div>
+        <div><label>PO number</label><input id="i_po" value="${esc(j.detected.po_no)}"></div>
+        <div><label>Buyer</label><input id="i_buyer" list="blist" value="${esc(j.detected.buyer)}">
+          <datalist id="blist">${BUYERS.map((b) => `<option>${esc(b.name)}</option>`).join("")}</datalist></div>
+        <div><label>PI date</label><input id="i_date" type="date" value="${j.detected.pi_date || ""}"></div>
+        <div><label>Ex-factory date</label><input id="i_exf" type="date" value="${j.detected.ex_factory_date || ""}"></div>
+        <div><label>Ship date</label><input id="i_ship" type="date" value="${j.detected.ship_date || ""}"></div>
+      </div>
+      <h2 style="margin:16px 0 8px;font-size:15px">Column mapping · ${j.rowCount} rows found</h2>
+      <div class="grid2">
+        <div><label>Item No *</label><select id="m_item">${opts(j.mapping.item_no)}</select></div>
+        <div><label>Buyer No</label><select id="m_buyerno">${opts(j.mapping.buyer_no)}</select></div>
+        <div><label>Description</label><select id="m_desc">${opts(j.mapping.description)}</select></div>
+        <div><label>Quantity *</label><select id="m_qty">${opts(j.mapping.qty)}</select></div>
+      </div>
+      <div class="scroll" style="max-height:220px;margin-top:12px"><table>
+        <thead><tr>${j.headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
+        <tbody>${j.sample.map((r) => `<tr>${j.headers.map((h) => `<td>${esc(r[h])}</td>`).join("")}</tr>`).join("")}</tbody>
+      </table></div>
+      <button class="solid" style="margin-top:12px" id="cbtn" onclick="commit()">Import this PI</button>`;
+  } catch (e) { $("#prev").innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
+}
+async function commit(allowDuplicate) {
+  const btn = $("#cbtn"); if (btn) { btn.disabled = true; btn.textContent = "Importing…"; }
+  try {
+    const body = {
+      importId: IMPORT.importId, allowDuplicate: !!allowDuplicate,
+      pi: { pi_no: $("#i_pi").value, po_no: $("#i_po").value, buyer: $("#i_buyer").value,
+            pi_date: $("#i_date").value, ex_factory_date: $("#i_exf").value, ship_date: $("#i_ship").value },
+      mapping: { item_no: $("#m_item").value, buyer_no: $("#m_buyerno").value, description: $("#m_desc").value, qty: $("#m_qty").value },
+    };
+    const r = await fetch("/api/import/commit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (r.status === 409) {
+      if (confirm(j.error + ". Import it again anyway?")) return commit(true);
+      throw new Error("Import cancelled");
+    }
+    if (!r.ok) throw new Error(j.error);
+    BUYERS = await api("/buyers");
+    msg(`Imported ${j.count} SKUs${j.carried ? ` · ${j.carried} reused earlier vendor settings` : ""}`);
+    OPEN_PI = j.piId; go("orders");
+  } catch (e) { msg(e.message, "err"); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = "Import this PI"; } }
+}
+
+boot();
+</script>
+</body>
+</html>
