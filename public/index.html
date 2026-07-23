@@ -628,7 +628,8 @@ async function preview(file){
   const fd=new FormData();fd.append("file",file);
   try{
     const r=await fetch("/api/import/preview",{method:"POST",body:fd});const j=await r.json();
-    if(!r.ok)throw new Error(j.error);IMPORT=j;
+    if(!r.ok){const err=new Error(j.error||"Could not read that file");err.sample=j.sample;throw err;}
+    IMPORT=j;
     const head=`<hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
       <div class="grid2">
         <div><label>PI number *</label><input id="i_pi" value="${esc(j.detected.pi_no)}"></div>
@@ -657,7 +658,19 @@ async function preview(file){
         <div><label>Quantity *</label><select id="m_qty">${opts(j.mapping.qty)}</select></div>
       </div>
       <button class="btn" style="margin-top:14px" id="cbtn" onclick="commit()">Import this PI</button>`;
-  }catch(e){$("#prev").innerHTML=`<div class="msg err" style="margin-top:14px">${esc(e.message)}</div>`;}
+  }catch(e){
+    let extra="";
+    if(e && e.sample){
+      extra=`<div class="card" style="margin-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px">
+          <b style="font-size:13px">What the PDF reader found</b>
+          <button class="btn tiny ghost" onclick="navigator.clipboard.writeText(document.getElementById('pdfdiag').textContent);msg('Copied — paste this to get the format supported')">Copy text</button>
+        </div>
+        <pre id="pdfdiag" style="white-space:pre-wrap;font-size:11.5px;max-height:260px;overflow:auto;background:var(--bg2);padding:10px;border-radius:8px;margin:0">${esc(e.sample)}</pre>
+      </div>`;
+    }
+    $("#prev").innerHTML=`<div class="msg err" style="margin-top:14px">${esc(e.message)}</div>`+extra;
+  }
 }
 async function commit(allowDuplicate){
   const btn=$("#cbtn");if(btn){btn.disabled=true;btn.textContent="Importing…";}

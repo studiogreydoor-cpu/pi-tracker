@@ -334,7 +334,16 @@ api.post("/import/preview", upload.single("file"), async (req, res) => {
   if (isPdf) {
     try {
       const p = await parseInvoicePdf(req.file.buffer);
-      if (!p.skus || !p.skus.length) return res.status(400).json({ error: "Couldn't find line items in that PDF. If it's a scan, please use the Excel export." });
+      if (!p.skus || !p.skus.length) {
+        // Show what the extractor actually produced, so the layout can be diagnosed.
+        const sample = String(p._text || "").split(/\r?\n/).filter((l) => l.trim()).slice(0, 60).join("\n");
+        return res.status(400).json({
+          error: sample
+            ? "Couldn't find line items in this PDF's layout. The text it contains is shown below — send it to me and I'll add support for this format."
+            : "This PDF has no readable text — it looks like a scan. Please use the Excel export instead.",
+          sample,
+        });
+      }
       const importId = crypto.randomUUID();
       pending.set(importId, { mode: "invoice", skus: p.skus });
       setTimeout(() => pending.delete(importId), 30 * 60 * 1000);

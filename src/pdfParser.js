@@ -110,67 +110,95 @@ function parseInvoiceText(text) {
   }
 
   // --- line items ---
-  // PDF text extractors emit these in different column orders, e.g.
-  //   "18947   MCA-1   MEZUZAH   300 Pc   1.10   330.00"      (layout-preserving)
-  //   "18947 MEZUZAH MCA-1 300 1.10 330.00 Pc"                (reading order)
-  // So instead of assuming an order: strip the unit, take the trailing numbers,
-  // then split the remaining prefix into item code / buyer code / description.
+  // Layouts seen so far:
+  //   A) "18947   MCA-1   MEZUZAH   300 Pc   1.10   330.00"   (columns preserved)
+  //   B) "18947 MEZUZAH MCA-1 300 1.10 330.00 Pc"             (reading order)
+  //   C) "18490 Patio bowl mustard 100Pc"  with "Buyer No" / code / price on following lines
+  // So: identify the item line, pull the quantity from it, then look ahead for a buyer code.
   const skus = [];
   const seen = new Set();
-  const looksLikeBuyerCode = (t) => /^[A-Za-z]{1,6}[-/]?\d{1,4}[A-Za-z]?$/.test(t) && /[A-Za-z]/.test(t);
+  const looksLikeBuyerCode = (t) => /^[A-Za-z]{1,6}[-/]?\d{1,6}[A-Za-z]?$/.test(t) && /[A-Za-z]/.test(t) && /\d/.test(t);
+  const skipLine = (t) => /^(item no|total|amount in|continued|proforma|page|for grey|authorised|signature|please send|buyer order|ship date|ex-factory|payment terms|delivery terms|port of|our banker|forwarder|partshipment|manufacturer|picture|packing|cbm|buyer no|total volume|us[. ]|five only)/i.test(t);
 
-  for (const raw of lines) {
-    let line = raw.replace(/\t/g, " ").trim();
-    if (!line) continue;
-    if (/^(item no|total|amount in|continued|proforma|page|for grey|authorised|signature|please send|buyer order|ship date|ex-factory|payment terms|delivery terms|port of|our banker|forwarder|partshipment|manufacturer)/i.test(line)) continue;
+  for (let li = 0; li < lines.length; li++) {
+    let line = lines[li].replace(/\t/g, " ").trim();
+    if (!line || skipLine(line)) continue;
+    if (!/^\d[\w\-/]*\s/.test(line)) continue;      // must start with an item code
 
-    // must start with an item code (digits, optionally with a letter/suffix)
-    if (!/^\d[\w\-/]*\s/.test(line)) continue;
-
-    // remove a trailing unit word ("Pc", "Pcs", "Nos")
-    line = line.replace(/\s+(pcs?|nos?)\.?\s*$/i, "");
+    // strip a trailing unit, with or without a space before it ("300 Pc" or "100Pc")
+    line = line.replace(/\s*(pcs?|nos?)\.?\s*$/i, "");
 
     const tokens = line.split(/\s+/);
-    if (tokens.length < 3) continue;
+    if (tokens.length < 2) continue;
 
-    // Collect trailing numeric tokens (amount, price, qty — possibly with a unit between)
+    // trailing numeric run (qty / price / amount, in whatever order this layout uses)
     const nums = [];
     let i = tokens.length - 1;
     while (i > 0 && nums.length < 4) {
       const t = tokens[i];
+      const attached = t.match(/^([\d,]+)(pcs?|nos?)$/i);      // e.g. "100Pc"
+      if (attached) { nums.unshift({ v: attached[1], idx: i, unit: true }); i--; continue; }
       if (/^[\d,]+(\.\d+)?$/.test(t)) { nums.unshift({ v: t, idx: i }); i--; continue; }
-      if (/^(pcs?|nos?)\.?$/i.test(t)) { i--; continue; }   // unit sitting mid-line
+      if (/^(pcs?|nos?)\.?$/i.test(t)) { i--; continue; }
       break;
     }
     if (!nums.length) continue;
 
-    // Quantity = the first of the trailing number run that is a whole number.
-    // (amount and price carry decimals; qty does not)
-    let qtyTok = nums.find((n) => !n.v.includes("."));
-    if (!qtyTok) qtyTok = nums[0];
+    // qty: prefer the token that carried the unit, else the first whole number
+    let qtyTok = nums.find((n) => n.unit) || nums.find((n) => !n.v.includes(".")) || nums[0];
     const qty = parseInt(qtyTok.v.replace(/[^0-9]/g, ""), 10);
     if (!qty) continue;
 
     const itemNo = tokens[0];
-    // everything between the item code and the numbers is description + buyer code
     const middle = tokens.slice(1, qtyTok.idx);
     let buyerNo = "";
     const bIdx = middle.findIndex(looksLikeBuyerCode);
     let descParts = middle;
-    if (bIdx >= 0) {
-      buyerNo = middle[bIdx];
-      descParts = middle.filter((_, k) => k !== bIdx);
+    if (bIdx >= 0) { buyerNo = middle[bIdx]; descParts = middle.filter((_, k) => k !== bIdx); }
+
+    // layout C: the buyer code sits on one of the next few lines, often after "Buyer No"
+    if (!buyerNo) {
+      for (let k = li + 1; k < Math.min(li + 5, lines.length); k++) {
+        const nxt = (lines[k] || "").trim();
+        if (!nxt) continue;
+        if (/^\d[\w\-/]*\s/.test(nxt)) break;            // next item line — stop
+        if (/^buyer\s*no/i.test(nxt)) continue;            // the label itself
+        if (looksLikeBuyerCode(nxt)) { buyerNo = nxt; break; }
+      }
     }
-    const description = descParts.join(" ").replace(/\s{2,}/g, " ").trim();
+
+    const description = descParts.join(" ").replace(/\s{2,}/g, " ").replace(/[,\s]+$/, "").trim();
     if (!description && !buyerNo) continue;
 
     const key = itemNo + "|" + qty + "|" + description;
-    if (seen.has(key)) continue;              // repeated page headers/footers
+    if (seen.has(key)) continue;                            // repeated page headers/footers
     seen.add(key);
     skus.push({ item_no: itemNo, buyer_no: buyerNo, description, qty });
   }
 
-  return { pi, po, buyer, buyer_address: addr.join(", "), pi_date: piDate, ex_factory_date: exf, ship_date: ship, skus };
+  // Fallback: some extractors return the page as one long run with few line breaks.
+  // Scan the whole text for "<item code> <description> <qty>Pc" style matches.
+  if (!skus.length) {
+    const re = /(\b\d{4,7})\s+([A-Za-z][^\n]{1,70}?)\s+(\d{1,6})\s*(?:pcs?|nos?)\b/gi;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const itemNo = m[1];
+      let desc = m[2].replace(/\s{2,}/g, " ").trim();
+      const qty = parseInt(m[3], 10);
+      if (!qty) continue;
+      let buyerNo = "";
+      const parts = desc.split(/\s+/);
+      const bIdx = parts.findIndex(looksLikeBuyerCode);
+      if (bIdx >= 0) { buyerNo = parts[bIdx]; desc = parts.filter((_, k) => k !== bIdx).join(" "); }
+      desc = desc.replace(/(buyer\s*no|packing.*|cbm.*)$/i, "").replace(/[,\s]+$/, "").trim();
+      const key = itemNo + "|" + qty + "|" + desc;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      skus.push({ item_no: itemNo, buyer_no: buyerNo, description: desc, qty });
+    }
+  }
+
+  return { pi, po, buyer, buyer_address: addr.join(", "), pi_date: piDate, ex_factory_date: exf, ship_date: ship, skus, _text: text };
 }
 
 async function parseInvoicePdf(buffer) {
