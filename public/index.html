@@ -120,6 +120,17 @@
   .calcell.today{border-color:var(--brass);border-width:2px}
   .calitem{font-size:11px;padding:3px 7px;border-radius:5px;margin-bottom:4px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ci-red{background:var(--late);color:#fff} .ci-amber{background:var(--soon-bg);color:#9A6205;border:1px solid var(--soon-line)} .ci-green{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-line)}
+  .pigrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
+  .picard{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:15px 16px;cursor:pointer;box-shadow:var(--shadow);transition:border-color .15s}
+  .picard:hover{border-color:var(--brass)}
+  .pihead{display:flex;justify-content:space-between;align-items:start;gap:8px}
+  .pihead b{font-family:'Fraunces',serif;font-weight:600;font-size:16px}
+  .pinums{display:flex;gap:14px;font-size:12.5px;color:var(--muted);margin-top:9px}
+  .pinums b{color:var(--ink);font-size:14px}
+  .vrow{display:flex;gap:5px;flex-wrap:wrap}
+  .vchip{font-size:11px;font-weight:600;padding:3px 9px;border-radius:99px;border:1px solid transparent}
+  .vok{background:var(--ok-bg);color:var(--ok);border-color:var(--ok-line)}
+  .vlate{background:var(--late-bg);color:var(--late);border-color:var(--late-line)}
   table.grid td{padding:6px 8px}
   table.grid th{padding:8px}
   .mini{padding:5px 7px;font-size:12px;border-radius:6px;min-width:96px}
@@ -300,6 +311,11 @@ async function viewDashboard(){
         :`<div class="empty" style="padding:26px">Nothing due in the next 7 days.</div>`}
     </div>
 
+    <div style="margin-top:24px">
+      <h2 style="font-family:'Fraunces',serif;font-weight:700;font-size:19px;margin:0 0 12px">Orders at a glance</h2>
+      <div id="pistatus"></div>
+    </div>
+
     <div class="tiles" style="margin-top:22px">
       <div class="tile brass"><div class="edge"></div><div class="k">Pieces still due</div><div class="v">${t.due.toLocaleString("en-IN")}</div></div>
       <div class="tile green"><div class="edge"></div><div class="k">In hand</div><div class="v">${t.in_hand.toLocaleString("en-IN")}</div></div>
@@ -343,21 +359,72 @@ async function viewOrders(){
   $("#view").innerHTML=`<div class="empty">Loading…</div>`;
   const pis=await api("/pis");
   if(!pis.length){$("#view").innerHTML=`<div class="card empty">No orders yet. <a href="#" onclick="go('import');return false" style="color:var(--brass);font-weight:600">Import your first PI →</a></div>`;return;}
-  $("#view").innerHTML=`<div class="charts" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))">
+  $("#view").innerHTML=`<div class="charts" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
     ${pis.map(p=>{
       const health=p.late_count?"red":p.progress_pct>=100?"done":p.progress_pct>0?"amber":"green";
-      const hc={red:"var(--red)",amber:"var(--amber)",green:"var(--green)",done:"var(--faint)"}[health];
-      return `<div class="card rail row-${health}" style="cursor:pointer" onclick="openPI(${p.id})">
-        <div style="display:flex;justify-content:space-between;align-items:start;gap:8px">
+      const hc={red:"var(--late)",amber:"var(--soon)",green:"var(--green)",done:"var(--faint)"}[health];
+      return `<div class="card rail row-${health}">
+        <div style="display:flex;justify-content:space-between;align-items:start;gap:8px;cursor:pointer" onclick="openPI(${p.id})">
           <div><div style="font-family:'Fraunces',serif;font-weight:600;font-size:18px;color:var(--ink)">PI ${esc(p.pi_no)}</div>
             <div class="desc">${esc(p.buyer_name||"—")}</div></div>
           ${p.late_count?`<span class="pill p-red">${p.late_count} late</span>`:p.progress_pct>=100?`<span class="pill p-green">Ready</span>`:""}
         </div>
-        <div style="margin:12px 0 6px">${barEl(p.progress_pct,hc)}</div>
-        <div class="desc">${p.in_hand_qty}/${p.ordered_qty} pcs · ${p.sku_count} SKUs${p.first_due?` · first due ${dmy(p.first_due)}`:""}</div>
+        <div style="margin:12px 0 6px;cursor:pointer" onclick="openPI(${p.id})">${barEl(p.progress_pct,hc)}</div>
+        <div class="desc" style="margin-bottom:12px">${p.in_hand_qty}/${p.ordered_qty} pcs · ${p.sku_count} SKUs${p.first_due?` · first due ${dmy(p.first_due)}`:""}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:10px">
+          <button class="btn tiny" onclick="event.stopPropagation();openPI(${p.id})">Open</button>
+          <button class="btn tiny ghost" onclick="event.stopPropagation();editPI(${p.id})">Edit</button>
+          <button class="btn tiny ghost" onclick="event.stopPropagation();completeAll(${p.id},'${esc(p.pi_no)}')">Complete all</button>
+          <button class="btn tiny ghost" style="color:var(--late);border-color:var(--late-line)" onclick="event.stopPropagation();deletePI(${p.id},'${esc(p.pi_no)}')">Delete</button>
+        </div>
       </div>`;}).join("")}
   </div>`;
 }
+
+async function completeAll(id,piNo){
+  if(!confirm(`Mark every SKU in PI ${piNo} as complete?`))return;
+  try{await api(`/pis/${id}/complete-all`,{method:"POST"});msg(`PI ${piNo} marked complete`);viewOrders();}
+  catch(e){msg(e.message,"err");}
+}
+async function deletePI(id,piNo){
+  if(!confirm(`Delete PI ${piNo} and all its SKUs?\n\nThis cannot be undone.`))return;
+  if(!confirm(`Really delete PI ${piNo}? Type-safe check: this removes every SKU, vendor assignment and received quantity for this order.`))return;
+  try{await api("/pis/"+id,{method:"DELETE"});msg(`PI ${piNo} deleted`);OPEN_PI=null;viewOrders();}
+  catch(e){msg(e.message,"err");}
+}
+async function editPI(id){
+  const pis=await api("/pis?all=1");const p=pis.find(x=>x.id===id);if(!p)return;
+  const wrap=document.createElement("div");
+  wrap.style.cssText="position:fixed;inset:0;background:rgba(20,26,18,.45);z-index:60;display:grid;place-items:center;padding:16px";
+  wrap.innerHTML=`<div class="card" style="max-width:520px;width:100%">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <h3 style="font-family:'Fraunces',serif;font-weight:600;font-size:18px;margin:0;color:var(--green)">Edit PI ${esc(p.pi_no)}</h3>
+      <button class="btn ghost tiny" id="eclose">Close</button></div>
+    <div class="grid2">
+      <div><label>PI number</label><input data-f="pi_no" value="${esc(p.pi_no||"")}"></div>
+      <div><label>PO number</label><input data-f="po_no" value="${esc(p.po_no||"")}"></div>
+      <div><label>PI date</label><input data-f="pi_date" type="date" value="${p.pi_date||""}"></div>
+      <div><label>Ex-factory date</label><input data-f="ex_factory_date" type="date" value="${p.ex_factory_date||""}"></div>
+      <div><label>Ship date</label><input data-f="ship_date" type="date" value="${p.ship_date||""}"></div>
+      <div><label>Buyer</label><select data-f="buyer_id">
+        <option value="">—</option>
+        ${BUYERS.map(b=>`<option value="${b.id}"${p.buyer_id==b.id?" selected":""}>${esc(b.name)}</option>`).join("")}
+      </select></div>
+    </div>
+    <div style="margin-top:12px"><label>Notes</label><textarea data-f="notes" rows="2">${esc(p.notes||"")}</textarea></div>
+    <button class="btn" style="width:100%;margin-top:16px" id="esave">Save changes</button>
+  </div>`;
+  document.body.appendChild(wrap);
+  wrap.querySelector("#eclose").onclick=()=>wrap.remove();
+  wrap.onclick=(e)=>{if(e.target===wrap)wrap.remove();};
+  wrap.querySelector("#esave").onclick=async()=>{
+    const body={};
+    wrap.querySelectorAll("[data-f]").forEach(el=>{body[el.dataset.f]=el.value===""?null:el.value;});
+    try{await api("/pis/"+id,{method:"PATCH",body:JSON.stringify(body)});wrap.remove();msg("PI updated");viewOrders();}
+    catch(e){msg(e.message,"err");}
+  };
+}
+
 function openPI(id){OPEN_PI=id;viewPIDetail(id);}
 async function viewPIDetail(id){
   $("#pactions").innerHTML=`<button class="btn ghost" onclick="OPEN_PI=null;go('orders')">← All orders</button>`;

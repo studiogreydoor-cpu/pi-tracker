@@ -128,6 +128,15 @@ api.patch("/pis/:id", (req, res) => {
   if (req.body.packed === 1) db.prepare("UPDATE skus SET packed = 1 WHERE pi_id = ?").run(req.params.id);
   res.json({ ok: true });
 });
+api.post("/pis/:id/complete-all", (req, res) => {
+  db.prepare("UPDATE skus SET complete = 1 WHERE pi_id = ?").run(req.params.id);
+  res.json({ ok: true });
+});
+api.post("/pis/:id/uncomplete-all", (req, res) => {
+  db.prepare("UPDATE skus SET complete = 0 WHERE pi_id = ?").run(req.params.id);
+  res.json({ ok: true });
+});
+
 api.delete("/pis/:id", (req, res) => {
   db.prepare("DELETE FROM skus WHERE pi_id = ?").run(req.params.id);
   db.prepare("DELETE FROM pis WHERE id = ?").run(req.params.id);
@@ -189,6 +198,7 @@ api.get("/dashboard", (req, res) => {
 // Rich summary for the charts on the dashboard.
 api.get("/summary", (req, res) => {
   const all = D.getAllSkusDecorated(req.companyId).filter((s) => !s.shipped);
+  const vmap2 = D.vendorsById(req.companyId);
   const bucket = { green: 0, amber: 0, red: 0, overdue: 0, done: 0, none: 0 };
   all.forEach((s) => { bucket[s.status || "none"] = (bucket[s.status || "none"] || 0) + 1; });
   const giftBox = { yes: all.filter((s) => s.gift_box).length, no: all.filter((s) => !s.gift_box).length };
@@ -206,8 +216,30 @@ api.get("/summary", (req, res) => {
     });
   });
 
-  // per-PI progress
-  const pis = D.getPIs({ companyId: req.companyId }).map((p) => ({ pi_no: p.pi_no, buyer: p.buyer_name, ordered: p.ordered_qty, in_hand: p.in_hand_qty, pct: p.progress_pct, late: p.late_count }));
+  // per-PI progress, with SKU breakdown and the vendors involved
+  const piRows = D.getPIs({ companyId: req.companyId });
+  const pis = piRows.map((p) => {
+    const mine = all.filter((s) => s.pi_id === p.id);
+    const vendorHealth = {};
+    mine.forEach((s) => {
+      [s.v1_id, s.v2_id, s.v3_id, s.v4_id].forEach((vid) => {
+        if (!vid) return;
+        const name = (vmap2[vid] || {}).name || ("Vendor " + vid);
+        if (!vendorHealth[name]) vendorHealth[name] = { name, late: 0, total: 0 };
+        vendorHealth[name].total++;
+        if (s.late) vendorHealth[name].late++;
+      });
+    });
+    return {
+      id: p.id, pi_no: p.pi_no, buyer: p.buyer_name,
+      ordered: p.ordered_qty, in_hand: p.in_hand_qty, pct: p.progress_pct,
+      late: p.late_count, sku_count: p.sku_count,
+      ready: mine.filter((s) => s.complete).length,
+      pending: mine.filter((s) => !s.complete).length,
+      first_due: p.first_due,
+      vendors: Object.values(vendorHealth).sort((a, b) => a.name.localeCompare(b.name)),
+    };
+  });
 
   // due soon (next 21 days) grouped by week
   const today = D.todayISO();

@@ -60,7 +60,10 @@ function parseInvoiceText(text) {
     if (d) piDate = normDate(d[1]);
   }
   const poLine = clean.find((l) => /buyer\s*order\s*#/i.test(l));
-  if (poLine) { const n = poLine.match(/buyer\s*order\s*#\s*[:]?\s*(\d[\w\-/]*)/i); if (n) po = n[1]; }
+  if (poLine) {
+    const n = poLine.match(/buyer\s*order\s*#\s*[:]?\s*([A-Za-z0-9][\w\-/]*)/i);
+    if (n && !/^date$/i.test(n[1])) po = n[1];
+  }
   const exfLine = clean.find((l) => /ex[- ]?factory/i.test(l));
   if (exfLine) { const d = exfLine.match(/(\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4})/); if (d) exf = normDate(d[1]); }
   const shipLine = clean.find((l) => /ship\s*date/i.test(l) && /\d{1,2}[/\-.]\d{1,2}/.test(l));
@@ -79,8 +82,10 @@ function parseInvoiceText(text) {
 
   if (!pi || !po) {
     const nums = headRegion.filter((l) => /^\d{1,8}$/.test(l));
+    // PO numbers are often alphanumeric, e.g. "PO013581"
+    const alnum = headRegion.filter((l) => /^[A-Z]{1,4}[-/]?\d{4,}$/i.test(l) && !/^\d+$/.test(l));
     if (!pi) pi = nums[0] || "";
-    if (!po) po = nums[1] || nums[0] || "";
+    if (!po) po = alnum[0] || nums[1] || nums[0] || "";
   }
 
   // --- buyer block ---
@@ -123,71 +128,79 @@ function parseInvoiceText(text) {
   }
 
   // --- line items ---
-  // Layouts seen so far:
-  //   A) "18947   MCA-1   MEZUZAH   300 Pc   1.10   330.00"   (columns preserved)
-  //   B) "18947 MEZUZAH MCA-1 300 1.10 330.00 Pc"             (reading order)
-  //   C) "18490 Patio bowl mustard 100Pc"  with "Buyer No" / code / price on following lines
-  // So: identify the item line, pull the quantity from it, then look ahead for a buyer code.
+  // Units seen on these invoices: Pc/Pcs, Set/Sets, No/Nos, Pair/Pairs.
+  const UNIT = /^(pcs?|sets?|nos?|pairs?|ctns?)\.?$/i;
+  const UNIT_TAIL = /\s*(pcs?|sets?|nos?|pairs?|ctns?)\.?\s*$/i;
   const skus = [];
   const seen = new Set();
-  const looksLikeBuyerCode = (t) => /^[A-Za-z]{1,6}[-/]?\d{1,6}[A-Za-z]?$/.test(t) && /[A-Za-z]/.test(t) && /\d/.test(t);
+  // Buyer codes look like MCA-1, KKX0005, TOV-C18863, TOV-T19124 — letters and digits, no spaces.
+  const looksLikeBuyerCode = (t) =>
+    /^[A-Za-z][A-Za-z0-9]*[-/]?[A-Za-z0-9]*\d[A-Za-z0-9]*$/.test(t) &&
+    /[A-Za-z]/.test(t) && /\d/.test(t) && t.length >= 3 && t.length <= 20 && !/^\d+$/.test(t);
   const skipLine = (t) => /^(item no|total|amount in|continued|proforma|page|for grey|authorised|signature|please send|buyer order|ship date|ex-factory|payment terms|delivery terms|port of|our banker|forwarder|partshipment|manufacturer|picture|packing|cbm|buyer no|total volume|us[. ]|five only)/i.test(t);
 
   for (let li = 0; li < lines.length; li++) {
     let line = lines[li].replace(/\t/g, " ").trim();
     if (!line || skipLine(line)) continue;
-    // A row that starts with an item code — glued or spaced.
-    if (!/^\d{3,}/.test(line)) continue;
-    if (!/(pcs?|nos?)\b/i.test(line) && !/^\d[\w\-/]*\s/.test(line)) continue;
+    if (!/^\d{3,}/.test(line)) continue;                       // must start with an item code
+    const hasUnit = /(pcs?|sets?|nos?|pairs?|ctns?)\b/i.test(line);
+    if (!hasUnit && !/^\d[\w\-/]*\s/.test(line)) continue;
     line = unglue(line);
 
-    // strip a trailing unit, with or without a space before it ("300 Pc" or "100Pc")
-    line = line.replace(/\s*(pcs?|nos?)\.?\s*$/i, "");
-
-    const tokens = line.split(/\s+/);
+    let tokens = line.split(/\s+/);
     if (tokens.length < 2) continue;
 
-    // trailing numeric run (qty / price / amount, in whatever order this layout uses)
-    const nums = [];
-    let i = tokens.length - 1;
-    while (i > 0 && nums.length < 4) {
-      const t = tokens[i];
-      const attached = t.match(/^([\d,]+)(pcs?|nos?)$/i);      // e.g. "100Pc"
-      if (attached) { nums.unshift({ v: attached[1], idx: i, unit: true }); i--; continue; }
-      if (/^[\d,]+(\.\d+)?$/.test(t)) { nums.unshift({ v: t, idx: i }); i--; continue; }
-      if (/^(pcs?|nos?)\.?$/i.test(t)) { i--; continue; }
-      break;
+    // Item number may carry a short suffix letter: "18625 B"
+    let itemNo = tokens[0];
+    let consumed = 1;
+    if (tokens[1] && /^[A-Za-z]{1,2}$/.test(tokens[1]) && !UNIT.test(tokens[1])) {
+      itemNo += " " + tokens[1];
+      consumed = 2;
     }
-    if (!nums.length) continue;
 
-    // qty: prefer the token that carried the unit, else the first whole number
-    let qtyTok = nums.find((n) => n.unit) || nums.find((n) => !n.v.includes(".")) || nums[0];
-    const qty = parseInt(qtyTok.v.replace(/[^0-9]/g, ""), 10);
+    // Quantity: the number immediately before a unit word is the most reliable signal.
+    const isNum = (t) => /^[\d,]+(\.\d+)?$/.test(t);
+    const isInt = (t) => /^[\d,]+$/.test(t);
+    let qty = 0, qtyIdx = -1;
+    for (let k = consumed; k < tokens.length; k++) {
+      if (UNIT.test(tokens[k]) && k > 0 && isInt(tokens[k - 1])) {
+        qty = parseInt(tokens[k - 1].replace(/,/g, ""), 10);
+        qtyIdx = k - 1;
+        break;
+      }
+    }
+    if (!qty) {
+      // No unit word: fall back to the first whole number after the item code.
+      const stripped = line.replace(UNIT_TAIL, "").split(/\s+/);
+      for (let k = consumed; k < stripped.length; k++) {
+        if (isInt(stripped[k])) { qty = parseInt(stripped[k].replace(/,/g, ""), 10); qtyIdx = k; break; }
+      }
+      tokens = stripped;
+    }
     if (!qty) continue;
 
-    const itemNo = tokens[0];
-    const middle = tokens.slice(1, qtyTok.idx);
+    // Description = tokens between the item code and the quantity (prices come after).
+    const middle = tokens.slice(consumed, qtyIdx).filter((t) => !UNIT.test(t) && !isNum(t));
     let buyerNo = "";
     const bIdx = middle.findIndex(looksLikeBuyerCode);
     let descParts = middle;
     if (bIdx >= 0) { buyerNo = middle[bIdx]; descParts = middle.filter((_, k) => k !== bIdx); }
 
-    // layout C: the buyer code sits on one of the next few lines, often after "Buyer No"
+    // Buyer code is often on a following line, after a "Buyer No" label.
     if (!buyerNo) {
-      for (let k = li + 1; k < Math.min(li + 5, lines.length); k++) {
+      for (let k = li + 1; k < Math.min(li + 6, lines.length); k++) {
         const nxt = (lines[k] || "").trim();
         if (!nxt) continue;
-        if (/^\d[\w\-/]*\s/.test(nxt)) break;            // next item line — stop
-        if (/^buyer\s*no/i.test(nxt)) continue;            // the label itself
+        if (/^\d{3,}/.test(nxt) && /(pcs?|sets?|nos?)\b/i.test(nxt)) break;   // next item row
+        if (/^buyer\s*no/i.test(nxt)) continue;
+        if (/^(packing|cbm)/i.test(nxt)) continue;
         if (looksLikeBuyerCode(nxt)) { buyerNo = nxt; break; }
       }
     }
 
     const description = descParts.join(" ").replace(/\s{2,}/g, " ").replace(/[,\s]+$/, "").trim();
-    if (!description && !buyerNo) continue;
-
-    const key = itemNo + "|" + qty + "|" + description;
-    if (seen.has(key)) continue;                            // repeated page headers/footers
+    const key = itemNo + "|" + qty;
+    if (seen.has(key)) continue;
     seen.add(key);
     skus.push({ item_no: itemNo, buyer_no: buyerNo, description, qty });
   }
