@@ -78,6 +78,19 @@ CREATE TABLE IF NOT EXISTS skus (
   notes TEXT DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS sku_vendors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sku_id INTEGER NOT NULL REFERENCES skus(id) ON DELETE CASCADE,
+  vendor_id INTEGER REFERENCES vendors(id),
+  role TEXT DEFAULT 'part',            -- part | giftbox | labels
+  received_qty INTEGER DEFAULT 0,
+  received_date TEXT,
+  r1_qty INTEGER DEFAULT 0, r1_date TEXT, r1_back_qty INTEGER DEFAULT 0, r1_back_date TEXT,
+  r2_qty INTEGER DEFAULT 0, r2_date TEXT, r2_back_qty INTEGER DEFAULT 0, r2_back_date TEXT,
+  r3_qty INTEGER DEFAULT 0, r3_date TEXT, r3_back_qty INTEGER DEFAULT 0, r3_back_date TEXT,
+  notes TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_sv_sku ON sku_vendors(sku_id);
 CREATE INDEX IF NOT EXISTS idx_skus_pi ON skus(pi_id);
 CREATE INDEX IF NOT EXISTS idx_skus_item ON skus(item_no);
 `);
@@ -100,6 +113,26 @@ if (!firstCompany) {
 ["pis", "vendors", "buyers"].forEach((t) => {
   db.prepare(`UPDATE ${t} SET company_id = ? WHERE company_id IS NULL`).run(firstCompany.id);
 });
+
+// Move any legacy per-SKU vendor slots into sku_vendors, preserving received/return figures.
+try {
+  const legacy = db.prepare(`SELECT * FROM skus WHERE (v1_id IS NOT NULL OR v2_id IS NOT NULL OR v3_id IS NOT NULL OR v4_id IS NOT NULL)
+    AND id NOT IN (SELECT DISTINCT sku_id FROM sku_vendors)`).all();
+  const ins = db.prepare(`INSERT INTO sku_vendors (sku_id,vendor_id,role,received_qty,received_date,
+    r1_qty,r1_date,r1_back_qty,r1_back_date,r2_qty,r2_date,r2_back_qty,r2_back_date,r3_qty,r3_date,r3_back_qty,r3_back_date)
+    VALUES (?,?,'part',?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  legacy.forEach((s) => {
+    const slots = [s.v1_id, s.v2_id, s.v3_id, s.v4_id].filter(Boolean);
+    slots.forEach((vid, i) => {
+      // put the SKU-level receipts on the first vendor only, so totals stay correct
+      const first = i === 0;
+      ins.run(s.id, vid, first ? s.received_qty || 0 : 0, first ? s.received_date : null,
+        first ? s.r1_qty || 0 : 0, first ? s.r1_date : null, first ? s.r1_back_qty || 0 : 0, first ? s.r1_back_date : null,
+        first ? s.r2_qty || 0 : 0, first ? s.r2_date : null, first ? s.r2_back_qty || 0 : 0, first ? s.r2_back_date : null,
+        first ? s.r3_qty || 0 : 0, first ? s.r3_date : null, first ? s.r3_back_qty || 0 : 0, first ? s.r3_back_date : null);
+    });
+  });
+} catch (e) {}
 
 // ---------- date helpers (stored ISO, displayed DD/MM/YY) ----------
 function addDays(iso, days) {
@@ -135,37 +168,71 @@ function parseDate(value) {
 }
 
 // ---------- computed production figures ----------
-function decorateSku(sku, vendorsById, pi) {
-  const inHand =
+function assignmentsFor(skuId) {
+  return db.prepare("SELECT * FROM sku_vendors WHERE sku_id = ? ORDER BY id").all(skuId);
+}
+
+function decorateSku(sku, vendorsMap, pi, assigns) {
+  const rows = assigns || assignmentsFor(sku.id);
+  const piDate = pi ? pi.pi_date : null;
+
+  const vendors = rows.map((a) => {
+    const v = a.vendor_id ? vendorsMap[a.vendor_id] : null;
+    const inHand =
+      (a.received_qty || 0) + (a.r1_back_qty || 0) + (a.r2_back_qty || 0) + (a.r3_back_qty || 0) -
+      ((a.r1_qty || 0) + (a.r2_qty || 0) + (a.r3_qty || 0));
+    const due = v && v.lead_time_days ? addDays(piDate, v.lead_time_days) : null;
+    let status = null, daysLeft = null;
+    if (due && !sku.complete) {
+      daysLeft = daysBetween(todayISO(), due);
+      status = daysLeft < 0 ? "overdue" : daysLeft <= 5 ? "red" : daysLeft <= 15 ? "amber" : "green";
+    } else if (sku.complete) status = "done";
+    return {
+      id: a.id, vendor_id: a.vendor_id, vendor: v ? v.name : "", role: a.role || "part",
+      lead_time: v ? v.lead_time_days : null, due, status, days_left: daysLeft,
+      received_qty: a.received_qty || 0, received_date: a.received_date,
+      r1_qty: a.r1_qty || 0, r1_date: a.r1_date, r1_back_qty: a.r1_back_qty || 0, r1_back_date: a.r1_back_date,
+      r2_qty: a.r2_qty || 0, r2_date: a.r2_date, r2_back_qty: a.r2_back_qty || 0, r2_back_date: a.r2_back_date,
+      r3_qty: a.r3_qty || 0, r3_date: a.r3_date, r3_back_qty: a.r3_back_qty || 0, r3_back_date: a.r3_back_date,
+      in_hand: inHand,
+      returned: (a.r1_qty || 0) + (a.r2_qty || 0) + (a.r3_qty || 0),
+      returned_back: (a.r1_back_qty || 0) + (a.r2_back_qty || 0) + (a.r3_back_qty || 0),
+      late: due && !sku.complete && daysLeft < 0 ? 1 : 0,
+    };
+  });
+
+  const parts = vendors.filter((v) => v.role === "part");
+  // Received for the SKU = the largest single vendor's good stock (each vendor supplies the whole SKU's
+  // component set). If there are no vendor rows, fall back to the SKU-level figures.
+  const legacyInHand =
     (sku.received_qty || 0) + (sku.r1_back_qty || 0) + (sku.r2_back_qty || 0) + (sku.r3_back_qty || 0) -
     ((sku.r1_qty || 0) + (sku.r2_qty || 0) + (sku.r3_qty || 0));
+  const inHand = parts.length ? Math.min(...parts.map((v) => v.in_hand)) : legacyInHand;
   const stillDue = (sku.qty || 0) - inHand;
-  const outForRepair = (sku.r1_qty || 0) + (sku.r2_qty || 0) + (sku.r3_qty || 0) -
-    ((sku.r1_back_qty || 0) + (sku.r2_back_qty || 0) + (sku.r3_back_qty || 0));
 
-  const piDate = pi ? pi.pi_date : null;
-  const vendorDue = [];
-  [sku.v1_id, sku.v2_id, sku.v3_id, sku.v4_id].forEach((vid, i) => {
-    const v = vid ? vendorsById[vid] : null;
-    vendorDue.push(v && v.lead_time_days ? { slot: i + 1, vendorId: vid, vendor: v.name, due: addDays(piDate, v.lead_time_days) } : null);
-  });
-  const dues = vendorDue.filter(Boolean).map((x) => x.due).filter(Boolean).sort();
+  const dues = vendors.map((v) => v.due).filter(Boolean).sort();
   const overallDue = dues.length ? dues[dues.length - 1] : null;
   const nextDue = dues.length ? dues[0] : null;
 
   let status = null, daysLeft = null;
-  if (overallDue && !sku.complete) {
+  if (sku.complete) status = "done";
+  else if (overallDue) {
     daysLeft = daysBetween(todayISO(), overallDue);
     status = daysLeft < 0 ? "overdue" : daysLeft <= 5 ? "red" : daysLeft <= 15 ? "amber" : "green";
-  } else if (sku.complete) {
-    status = "done";
   }
   const pct = sku.qty > 0 ? Math.max(0, Math.min(100, Math.round((inHand / sku.qty) * 100))) : 0;
 
-  return { ...sku, in_hand: inHand, still_due: stillDue, out_for_repair: outForRepair,
-    vendor_due: vendorDue, overall_due: overallDue, next_due: nextDue,
+  return {
+    ...sku, vendors,
+    gift_box_vendor: (vendors.find((v) => v.role === "giftbox") || {}).vendor_id || null,
+    in_hand: inHand, still_due: stillDue,
+    total_received: parts.reduce((t, v) => t + v.received_qty, 0),
+    total_returned: parts.reduce((t, v) => t + v.returned, 0),
+    overall_due: overallDue, next_due: nextDue,
     status, days_left: daysLeft, progress_pct: pct,
-    late: status === "overdue" ? 1 : 0 };
+    late: status === "overdue" ? 1 : 0,
+    late_vendors: vendors.filter((v) => v.late).map((v) => v.vendor).filter(Boolean),
+  };
 }
 
 function vendorsById(companyId) {
@@ -180,12 +247,22 @@ function vendorsById(companyId) {
 function getSkusForPI(piId) {
   const pi = db.prepare("SELECT * FROM pis WHERE id = ?").get(piId);
   const vmap = vendorsById();
+  const amap = allAssignments();
   return db.prepare("SELECT * FROM skus WHERE pi_id = ? ORDER BY item_no").all(piId)
-    .map((s) => decorateSku(s, vmap, pi));
+    .map((s) => decorateSku(s, vmap, pi, amap[s.id] || []));
+}
+
+function allAssignments() {
+  const map = {};
+  db.prepare("SELECT * FROM sku_vendors ORDER BY id").all().forEach((a) => {
+    (map[a.sku_id] = map[a.sku_id] || []).push(a);
+  });
+  return map;
 }
 
 function getAllSkusDecorated(companyId) {
   const vmap = vendorsById();
+  const amap = allAssignments();
   const pis = {};
   const piRows = companyId
     ? db.prepare("SELECT * FROM pis WHERE company_id = ?").all(companyId)
@@ -194,7 +271,7 @@ function getAllSkusDecorated(companyId) {
   const skus = companyId
     ? db.prepare("SELECT s.* FROM skus s JOIN pis p ON p.id = s.pi_id WHERE p.company_id = ?").all(companyId)
     : db.prepare("SELECT * FROM skus").all();
-  return skus.map((s) => decorateSku(s, vmap, pis[s.pi_id]));
+  return skus.map((s) => decorateSku(s, vmap, pis[s.pi_id], amap[s.id] || []));
 }
 
 function getPIs({ includeShipped = false, companyId = null } = {}) {
@@ -226,13 +303,13 @@ function getPIs({ includeShipped = false, companyId = null } = {}) {
 function priorSettings(itemNo, companyId) {
   if (companyId) {
     return db.prepare(`
-      SELECT s.gift_box, s.gift_box_vendor_id, s.labels_needed, s.v1_id, s.v2_id, s.v3_id, s.v4_id
+      SELECT s.id AS prev_sku_id, s.gift_box, s.gift_box_vendor_id, s.labels_needed, s.v1_id, s.v2_id, s.v3_id, s.v4_id
       FROM skus s JOIN pis p ON p.id = s.pi_id
       WHERE s.item_no = ? AND p.company_id = ? ORDER BY s.id DESC LIMIT 1
     `).get(itemNo, companyId);
   }
   return db.prepare(`
-    SELECT gift_box, gift_box_vendor_id, labels_needed, v1_id, v2_id, v3_id, v4_id
+    SELECT id AS prev_sku_id, gift_box, gift_box_vendor_id, labels_needed, v1_id, v2_id, v3_id, v4_id
     FROM skus WHERE item_no = ? ORDER BY id DESC LIMIT 1
   `).get(itemNo);
 }
@@ -253,5 +330,5 @@ function findOrCreateVendor(name, companyId) {
   return db.prepare("INSERT INTO vendors (name, company_id) VALUES (?,?)").run(clean, companyId || null).lastInsertRowid;
 }
 
-module.exports = { db, addDays, todayISO, daysBetween, parseDate, decorateSku, vendorsById,
+module.exports = { db, addDays, assignmentsFor, allAssignments, todayISO, daysBetween, parseDate, decorateSku, vendorsById,
   getSkusForPI, getAllSkusDecorated, getPIs, priorSettings, findOrCreateBuyer, findOrCreateVendor };

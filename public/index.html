@@ -120,6 +120,21 @@
   .calcell.today{border-color:var(--brass);border-width:2px}
   .calitem{font-size:11px;padding:3px 7px;border-radius:5px;margin-bottom:4px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ci-red{background:var(--late);color:#fff} .ci-amber{background:var(--soon-bg);color:#9A6205;border:1px solid var(--soon-line)} .ci-green{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-line)}
+  .skucard{padding:0;overflow:hidden}
+  .skuhead{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:13px 16px;cursor:pointer;flex-wrap:wrap}
+  .skuhead:hover{background:var(--card2)}
+  .skustats{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .chev{color:var(--muted);font-size:12px}
+  .skubody{border-top:1px solid var(--line);padding:14px 16px;background:var(--bg2)}
+  .vsection{margin-bottom:14px}
+  .vsechead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .vsechead b{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+  .vblock{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 12px;margin-bottom:9px}
+  .vtop{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:9px}
+  .vgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:8px}
+  .vgrid label{margin-bottom:3px;font-size:9.5px}
+  .extras{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+  .cbx{display:flex;align-items:center;gap:7px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink);margin:0;font-weight:500}
   .pigrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
   .picard{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:15px 16px;cursor:pointer;box-shadow:var(--shadow);transition:border-color .15s}
   .picard:hover{border-color:var(--brass)}
@@ -288,7 +303,7 @@ async function viewDashboard(){
   const t=s.totals;
   const row=(x,late)=>`<div class="frow">
       <span class="item">${esc(x.item)}</span>
-      <span class="meta">${x.pi_id?"PI "+esc(x.pi_id):""}</span>
+      <span class="meta">${x.pi_no?"PI "+esc(x.pi_no):""}${x.vendors&&x.vendors.length?" · "+esc(x.vendors.join(", ")):""}</span>
       <span class="when" style="color:${late?"var(--late)":"var(--soon)"}">${late?`${-x.days} days late`:x.days===0?"Today":x.days===1?"Tomorrow":`in ${x.days} days`}</span>
       <span class="desc">${dmy(x.due)}</span>
     </div>`;
@@ -296,6 +311,11 @@ async function viewDashboard(){
     <div class="focus late" style="${overdue.length?"":"display:none"}">
       <div class="fhead">
         <h2><span class="count">${overdue.length}</span> Overdue</h2>
+        <div class="odsplit">
+          <span><b>${(s.overdue_counts&&s.overdue_counts.skus)||overdue.length}</b> SKUs</span>
+          <span><b>${(s.overdue_counts&&s.overdue_counts.vendors)||0}</b> vendors</span>
+          ${(s.overdue_counts&&s.overdue_counts.by_vendor||[]).slice(0,4).map(v=>`<span class="vchip vlate">${esc(v.name)} · ${v.count}</span>`).join("")}
+        </div>
         <button class="btn danger" onclick="go('items');setTimeout(()=>{ITEM_FILTER='overdue';viewItems()},60)">Chase all →</button>
       </div>
       <div class="flist">${overdue.slice(0,8).map(x=>row(x,true)).join("")}</div>
@@ -435,74 +455,116 @@ async function viewPIDetail(id){
   $("#ptitle").textContent="PI "+(pi.pi_no||"");
   $("#psub").textContent=`${pi.buyer_name||""} · PO ${pi.po_no||"—"} · ${dmy(pi.pi_date)}`;
 
-  const vsel=(s,slot,i)=>`<div class="cell-copy">
-      <select class="mini" onchange="setSku(${s.id},'${slot}',this.value||null)">
-        <option value="">—</option>
-        ${VENDORS.map(v=>`<option value="${v.id}"${s[slot]==v.id?" selected":""}>${esc(v.name)}${v.lead_time_days?` · ${v.lead_time_days}d`:""}</option>`).join("")}
-      </select>
-      <button class="copydown" title="Copy to all rows below" onclick="copyDown(${i},'${slot}')">↓</button>
-    </div>`;
-
   $("#view").innerHTML=`
     <div class="tiles">
       <div class="tile"><div class="edge"></div><div class="k">Ordered</div><div class="v">${pi.ordered_qty}</div></div>
       <div class="tile green"><div class="edge"></div><div class="k">In hand</div><div class="v">${pi.in_hand_qty}</div></div>
       <div class="tile brass"><div class="edge"></div><div class="k">Still due</div><div class="v">${pi.still_due_qty}</div></div>
-      <div class="tile ${pi.late_count?"red":""}"><div class="edge"></div><div class="k">Late SKUs</div><div class="v">${pi.late_count}</div></div>
+      <div class="tile ${pi.late_count?"late":""}"><div class="edge"></div><div class="k">Late SKUs</div><div class="v">${pi.late_count}</div></div>
     </div>
-    <div class="sub" style="margin-bottom:10px">Everything is editable right here. The <b>↓</b> button copies that value to every row below it.</div>
-    <div class="tablewrap"><table class="grid">
-      <thead><tr>
-        <th>Item</th><th>Description</th><th>Qty</th>
-        <th>Vendor 1</th><th>Vendor 2</th><th>Vendor 3</th><th>Vendor 4</th>
-        <th>Due</th><th>Status</th>
-        <th>Recd</th><th>In hand</th><th>Still due</th>
-        <th title="Gift box">Gift</th><th title="Labels needed">Lbl</th><th title="Labels ordered">Ord</th><th>Done</th><th></th>
-      </tr></thead>
-      <tbody>${skus.map((s,i)=>`<tr class="rail ${rowClass(s.status)}">
-        <td><span class="code">${esc(s.item_no)}</span><div class="desc">${esc(s.buyer_no||"")}</div></td>
-        <td class="desc" style="max-width:180px">${esc(s.description||"")}</td>
-        <td>${s.qty}</td>
-        <td>${vsel(s,"v1_id",i)}</td><td>${vsel(s,"v2_id",i)}</td><td>${vsel(s,"v3_id",i)}</td><td>${vsel(s,"v4_id",i)}</td>
-        <td style="white-space:nowrap">${dmy(s.overall_due)}</td>
-        <td>${statusPill(s.status,s.days_left)}</td>
-        <td><input class="mini num" type="number" value="${s.received_qty||0}" onchange="setSku(${s.id},'received_qty',this.value)"></td>
-        <td><b>${s.in_hand}</b></td>
-        <td style="color:${s.still_due>0?"var(--late)":"var(--ok)"};font-weight:700">${s.still_due}</td>
-        <td class="ctr"><div class="cell-copy"><input type="checkbox" ${s.gift_box?"checked":""} onchange="setSku(${s.id},'gift_box',this.checked?1:0)"><button class="copydown" onclick="copyDown(${i},'gift_box')">↓</button></div></td>
-        <td class="ctr"><div class="cell-copy"><input type="checkbox" ${s.labels_needed?"checked":""} onchange="setSku(${s.id},'labels_needed',this.checked?1:0)"><button class="copydown" onclick="copyDown(${i},'labels_needed')">↓</button></div></td>
-        <td class="ctr"><input type="checkbox" ${s.labels_ordered?"checked":""} onchange="setSku(${s.id},'labels_ordered',this.checked?1:0)"></td>
-        <td class="ctr"><input type="checkbox" ${s.complete?"checked":""} onchange="setSku(${s.id},'complete',this.checked?1:0)"></td>
-        <td><button class="btn tiny ghost" onclick="editSku(${s.id})">More</button></td>
-      </tr>`).join("")}</tbody>
-    </table></div>
-    <div class="sub" style="margin-top:10px">"More" opens repair returns and dates for that SKU.</div>`;
+    <div class="sub" style="margin-bottom:10px">Each SKU lists its own vendors. Record what each vendor delivered and returned separately.</div>
+    <div id="skulist">${skus.map(skuBlock).join("")}</div>`;
 }
 
+function skuBlock(s){
+  const vopts=(sel)=>`<option value="">— pick vendor —</option>`+VENDORS.map(v=>`<option value="${v.id}"${sel==v.id?" selected":""}>${esc(v.name)}${v.lead_time_days?` · ${v.lead_time_days}d`:""}</option>`).join("");
+  const parts=(s.vendors||[]).filter(v=>v.role==="part");
+  const gb=(s.vendors||[]).find(v=>v.role==="giftbox");
+  const lbl=(s.vendors||[]).find(v=>v.role==="labels");
+
+  const vendorRow=(v)=>`<div class="vblock">
+      <div class="vtop">
+        <select class="mini" onchange="setAssign(${v.id},'vendor_id',this.value||null)">${vopts(v.vendor_id)}</select>
+        <span class="desc">${v.due?`due ${dmy(v.due)}`:"no lead time set"}</span>
+        ${statusPill(v.status,v.days_left)}
+        <span class="desc" style="margin-left:auto">in hand <b style="color:var(--ink)">${v.in_hand}</b></span>
+        <button class="btn tiny ghost" style="color:var(--late);border-color:var(--late-line)" onclick="removeAssign(${v.id})">Remove</button>
+      </div>
+      <div class="vgrid">
+        <div><label>Received</label><input class="mini num" type="number" value="${v.received_qty||0}" onchange="setAssign(${v.id},'received_qty',this.value)"></div>
+        <div><label>Date</label><input class="mini" type="date" value="${v.received_date||""}" onchange="setAssign(${v.id},'received_date',this.value)"></div>
+        ${[1,2,3].map(n=>`
+        <div><label>Ret ${n} out</label><input class="mini num" type="number" value="${v["r"+n+"_qty"]||0}" onchange="setAssign(${v.id},'r${n}_qty',this.value)"></div>
+        <div><label>Date</label><input class="mini" type="date" value="${v["r"+n+"_date"]||""}" onchange="setAssign(${v.id},'r${n}_date',this.value)"></div>
+        <div><label>Ret ${n} back</label><input class="mini num" type="number" value="${v["r"+n+"_back_qty"]||0}" onchange="setAssign(${v.id},'r${n}_back_qty',this.value)"></div>
+        <div><label>Date</label><input class="mini" type="date" value="${v["r"+n+"_back_date"]||""}" onchange="setAssign(${v.id},'r${n}_back_date',this.value)"></div>`).join("")}
+      </div>
+    </div>`;
+
+  return `<div class="card skucard rail ${rowClass(s.status)}" style="margin-bottom:12px">
+    <div class="skuhead" onclick="toggleSku(${s.id})">
+      <div>
+        <span class="code" style="font-size:15px">${esc(s.item_no)}</span>
+        <span class="desc" style="margin-left:8px">${esc(s.buyer_no||"")}${s.description?" · "+esc(s.description):""}</span>
+      </div>
+      <div class="skustats">
+        <span class="desc">qty <b style="color:var(--ink)">${s.qty}</b></span>
+        <span class="desc">in hand <b style="color:var(--ok)">${s.in_hand}</b></span>
+        <span class="desc">due <b style="color:${s.still_due>0?"var(--late)":"var(--ok)"}">${s.still_due}</b></span>
+        <span style="min-width:90px">${barEl(s.progress_pct)}</span>
+        ${statusPill(s.status,s.days_left)}
+        <span class="chev" id="chev-${s.id}">▾</span>
+      </div>
+    </div>
+    <div class="skubody" id="body-${s.id}" style="display:${OPEN_SKUS.has(s.id)?"block":"none"}">
+      <div class="vsection">
+        <div class="vsechead"><b>Vendors</b>
+          <button class="btn tiny" onclick="addAssign(${s.id},'part')">+ Add vendor</button></div>
+        ${parts.length?parts.map(vendorRow).join(""):`<div class="desc" style="padding:6px 0">No vendors yet — add one to set a due date.</div>`}
+      </div>
+      <div class="vsection">
+        <div class="vsechead"><b>Extras</b></div>
+        <div class="extras">
+          <label class="cbx"><input type="checkbox" ${s.gift_box?"checked":""} onchange="setSku(${s.id},'gift_box',this.checked?1:0)"> Gift box</label>
+          ${s.gift_box?`<select class="mini" onchange="${gb?`setAssign(${gb.id},'vendor_id',this.value||null)`:`addAssignWith(${s.id},'giftbox',this.value)`}">${vopts(gb?gb.vendor_id:"")}</select>`:``}
+          <label class="cbx"><input type="checkbox" ${s.labels_needed?"checked":""} onchange="setSku(${s.id},'labels_needed',this.checked?1:0)"> Labels needed</label>
+          <label class="cbx"><input type="checkbox" ${s.labels_ordered?"checked":""} onchange="setSku(${s.id},'labels_ordered',this.checked?1:0)"> Labels ordered</label>
+          <label class="cbx"><input type="checkbox" ${s.complete?"checked":""} onchange="setSku(${s.id},'complete',this.checked?1:0)"> Complete</label>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+let OPEN_SKUS=new Set();
+function toggleSku(id){
+  const b=document.getElementById("body-"+id),c=document.getElementById("chev-"+id);
+  if(!b)return;
+  const open=b.style.display!=="none";
+  b.style.display=open?"none":"block";
+  if(c)c.textContent=open?"▾":"▴";
+  if(open)OPEN_SKUS.delete(id);else OPEN_SKUS.add(id);
+}
 let SKUS_CACHE=[];
-// Save one field, then refresh just what changed (keeps the page snappy).
 let saveQueue=Promise.resolve();
+function refreshSoon(){clearTimeout(window._rt);window._rt=setTimeout(()=>{if(OPEN_PI)viewPIDetail(OPEN_PI);},800);}
 function setSku(id,field,value){
   saveQueue=saveQueue.then(async()=>{
-    try{await api("/skus/"+id,{method:"PATCH",body:JSON.stringify({[field]:value})});}
-    catch(e){msg(e.message,"err");}
+    try{await api("/skus/"+id,{method:"PATCH",body:JSON.stringify({[field]:value})});}catch(e){msg(e.message,"err");}
   });
-  clearTimeout(window._refreshT);
-  window._refreshT=setTimeout(()=>{if(OPEN_PI)viewPIDetail(OPEN_PI);},900);
-  return saveQueue;
+  OPEN_SKUS.add(id);refreshSoon();return saveQueue;
 }
-// Excel-style fill down: copy this row's value to every row below.
-async function copyDown(fromIndex,field){
-  const src=SKUS_CACHE[fromIndex];if(!src)return;
-  const value=src[field];
-  const targets=SKUS_CACHE.slice(fromIndex+1);
-  if(!targets.length){msg("No rows below to copy into");return;}
-  msg(`Copying to ${targets.length} row${targets.length>1?"s":""}…`);
-  for(const t of targets){
-    try{await api("/skus/"+t.id,{method:"PATCH",body:JSON.stringify({[field]:value})});}catch(e){}
-  }
-  msg(`Copied down to ${targets.length} rows`);
-  if(OPEN_PI)viewPIDetail(OPEN_PI);
+function setAssign(id,field,value){
+  saveQueue=saveQueue.then(async()=>{
+    try{await api("/assignments/"+id,{method:"PATCH",body:JSON.stringify({[field]:value})});}catch(e){msg(e.message,"err");}
+  });
+  refreshSoon();return saveQueue;
+}
+async function addAssign(skuId,role){
+  OPEN_SKUS.add(skuId);
+  try{await api(`/skus/${skuId}/vendors`,{method:"POST",body:JSON.stringify({role:role||"part"})});viewPIDetail(OPEN_PI);}
+  catch(e){msg(e.message,"err");}
+}
+async function addAssignWith(skuId,role,vendorId){
+  if(!vendorId)return;
+  OPEN_SKUS.add(skuId);
+  try{await api(`/skus/${skuId}/vendors`,{method:"POST",body:JSON.stringify({role,vendor_id:vendorId})});viewPIDetail(OPEN_PI);}
+  catch(e){msg(e.message,"err");}
+}
+async function removeAssign(id){
+  if(!confirm("Remove this vendor from the SKU? Its received and return figures will be lost."))return;
+  try{await api("/assignments/"+id,{method:"DELETE"});viewPIDetail(OPEN_PI);}
+  catch(e){msg(e.message,"err");}
 }
 
 async function viewItems(){

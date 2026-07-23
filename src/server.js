@@ -157,6 +157,27 @@ api.patch("/skus/:id", (req, res) => {
   res.json(D.decorateSku(sku, D.vendorsById(), pi));
 });
 
+// ---------- per-SKU vendor assignments ----------
+api.post("/skus/:id/vendors", (req, res) => {
+  const { vendor_id, role } = req.body;
+  const r = db.prepare("INSERT INTO sku_vendors (sku_id, vendor_id, role) VALUES (?,?,?)")
+    .run(req.params.id, vendor_id || null, role || "part");
+  res.json({ id: r.lastInsertRowid });
+});
+const ASSIGN_FIELDS = ["vendor_id","role","received_qty","received_date",
+  "r1_qty","r1_date","r1_back_qty","r1_back_date","r2_qty","r2_date","r2_back_qty","r2_back_date",
+  "r3_qty","r3_date","r3_back_qty","r3_back_date","notes"];
+api.patch("/assignments/:id", (req, res) => {
+  const sets = [], vals = [];
+  ASSIGN_FIELDS.forEach((k) => { if (k in req.body) { sets.push(`${k} = ?`); vals.push(req.body[k] === "" ? null : req.body[k]); } });
+  if (sets.length) { vals.push(req.params.id); db.prepare(`UPDATE sku_vendors SET ${sets.join(", ")} WHERE id = ?`).run(...vals); }
+  res.json({ ok: true });
+});
+api.delete("/assignments/:id", (req, res) => {
+  db.prepare("DELETE FROM sku_vendors WHERE id = ?").run(req.params.id);
+  res.json({ ok: true });
+});
+
 api.get("/late", (req, res) => {
   const rows = D.getAllSkusDecorated(req.companyId).filter((s) => s.late && !s.shipped);
   const pis = {};
@@ -173,8 +194,8 @@ api.get("/items", (req, res) => {
   db.prepare("SELECT p.id, p.pi_no, b.name AS buyer_name FROM pis p LEFT JOIN buyers b ON b.id=p.buyer_id").all()
     .forEach((p) => (pis[p.id] = p));
   const rows = D.getAllSkusDecorated(req.companyId).filter((s) => !s.shipped).map((s) => {
-    const vendors = [s.v1_id, s.v2_id, s.v3_id, s.v4_id].filter(Boolean)
-      .map((id) => ({ id, name: (vmap[id] || {}).name || ("Vendor " + id) }));
+    const vendors = (s.vendors || []).filter((v) => v.vendor_id)
+      .map((v) => ({ id: v.vendor_id, name: v.vendor, late: v.late, role: v.role }));
     const p = pis[s.pi_id] || {};
     return { ...s, pi_no: p.pi_no || "", buyer_name: p.buyer_name || "", vendors };
   });
@@ -208,11 +229,10 @@ api.get("/summary", (req, res) => {
   const vmap = D.vendorsById();
   const vload = {};
   all.forEach((s) => {
-    [s.v1_id, s.v2_id, s.v3_id, s.v4_id].forEach((vid) => {
-      if (!vid) return;
-      const name = (vmap[vid] || {}).name || "Vendor " + vid;
-      vload[name] = vload[name] || { skus: 0, pieces: 0 };
-      vload[name].skus++; vload[name].pieces += s.qty || 0;
+    (s.vendors || []).forEach((v) => {
+      if (!v.vendor) return;
+      vload[v.vendor] = vload[v.vendor] || { skus: 0, pieces: 0 };
+      vload[v.vendor].skus++; vload[v.vendor].pieces += s.qty || 0;
     });
   });
 
@@ -222,12 +242,11 @@ api.get("/summary", (req, res) => {
     const mine = all.filter((s) => s.pi_id === p.id);
     const vendorHealth = {};
     mine.forEach((s) => {
-      [s.v1_id, s.v2_id, s.v3_id, s.v4_id].forEach((vid) => {
-        if (!vid) return;
-        const name = (vmap2[vid] || {}).name || ("Vendor " + vid);
-        if (!vendorHealth[name]) vendorHealth[name] = { name, late: 0, total: 0 };
-        vendorHealth[name].total++;
-        if (s.late) vendorHealth[name].late++;
+      (s.vendors || []).forEach((v) => {
+        if (!v.vendor) return;
+        if (!vendorHealth[v.vendor]) vendorHealth[v.vendor] = { name: v.vendor, late: 0, total: 0 };
+        vendorHealth[v.vendor].total++;
+        if (v.late) vendorHealth[v.vendor].late++;
       });
     });
     return {
@@ -243,11 +262,24 @@ api.get("/summary", (req, res) => {
 
   // due soon (next 21 days) grouped by week
   const today = D.todayISO();
+  const piNoById = {};
+  db.prepare("SELECT id, pi_no FROM pis").all().forEach((p) => (piNoById[p.id] = p.pi_no));
   const soon = all.filter((s) => s.overall_due && !s.complete)
-    .map((s) => ({ item: s.item_no, due: s.overall_due, days: D.daysBetween(today, s.overall_due), pi_id: s.pi_id }))
+    .map((s) => ({ item: s.item_no, due: s.overall_due, days: D.daysBetween(today, s.overall_due),
+      pi_id: s.pi_id, pi_no: piNoById[s.pi_id] || "", vendors: s.late_vendors || [] }))
     .sort((a, b) => a.due.localeCompare(b.due));
 
-  res.json({ status: bucket, giftBox, labels, vload, pis, soon: soon.slice(0, 25),
+  // overdue counted by SKU and by vendor
+  const overdueSkus = all.filter((s) => s.late && !s.complete);
+  const vendorOverdue = {};
+  overdueSkus.forEach((s) => (s.late_vendors || []).forEach((n) => { vendorOverdue[n] = (vendorOverdue[n] || 0) + 1; }));
+  const overdue_counts = {
+    skus: overdueSkus.length,
+    vendors: Object.keys(vendorOverdue).length,
+    by_vendor: Object.entries(vendorOverdue).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
+  };
+
+  res.json({ status: bucket, giftBox, labels, vload, pis, overdue_counts, soon: soon.slice(0, 40),
     totals: { skus: all.length, pieces: all.reduce((t, s) => t + (s.qty || 0), 0),
       in_hand: all.reduce((t, s) => t + s.in_hand, 0), due: all.reduce((t, s) => t + Math.max(0, s.still_due), 0) } });
 });
@@ -261,10 +293,11 @@ api.get("/vendor-timelines", (req, res) => {
   const out = {};
   Object.values(vmap).forEach((v) => (out[v.id] = { id: v.id, name: v.name, lead_time: v.lead_time_days, items: [] }));
   all.forEach((s) => {
-    s.vendor_due.forEach((vd) => {
-      if (!vd || !vd.vendorId) return;
-      if (!out[vd.vendorId]) out[vd.vendorId] = { id: vd.vendorId, name: vd.vendor, items: [] };
-      out[vd.vendorId].items.push({ item: s.item_no, desc: s.description, pi: pis[s.pi_id], qty: s.qty, due: vd.due, status: s.status, complete: s.complete });
+    (s.vendors || []).forEach((v) => {
+      if (!v.vendor_id) return;
+      if (!out[v.vendor_id]) out[v.vendor_id] = { id: v.vendor_id, name: v.vendor, items: [] };
+      out[v.vendor_id].items.push({ item: s.item_no, desc: s.description, pi: pis[s.pi_id], qty: s.qty,
+        due: v.due, status: v.status, complete: s.complete, role: v.role });
     });
   });
   Object.values(out).forEach((v) => v.items.sort((a, b) => (a.due || "").localeCompare(b.due || "")));
@@ -298,7 +331,7 @@ api.get("/export/late.csv", (req, res) => {
   const lines = [head.map(esc).join(",")];
   rows.forEach((s) => {
     const p = pis[s.pi_id] || {};
-    const vendors = [s.v1_id, s.v2_id, s.v3_id, s.v4_id].filter(Boolean).map((id) => (vmap[id] || {}).name).filter(Boolean).join("; ");
+    const vendors = (s.vendors || []).map((v) => v.vendor).filter(Boolean).join("; ");
     lines.push([s.item_no, s.buyer_no, s.description, p.pi_no, p.buyer_name, s.qty, s.still_due, s.overall_due, s.days_left != null ? -s.days_left : "", vendors].map(esc).join(","));
   });
   res.setHeader("Content-Type", "text/csv");
@@ -316,9 +349,9 @@ api.get("/export/vendor/:id.csv", (req, res) => {
   const esc = (val) => `"${String(val == null ? "" : val).replace(/"/g, '""')}"`;
   const lines = [["Item", "Buyer No", "Description", "PI", "Qty", "Due Date", "Status"].map(esc).join(",")];
   all.forEach((s) => {
-    s.vendor_due.forEach((vd) => {
-      if (vd && vd.vendorId == req.params.id) {
-        lines.push([s.item_no, s.buyer_no, s.description, pis[s.pi_id], s.qty, vd.due, s.complete ? "Complete" : (s.status || "")].map(esc).join(","));
+    (s.vendors || []).forEach((v) => {
+      if (v.vendor_id == req.params.id) {
+        lines.push([s.item_no, s.buyer_no, s.description, pis[s.pi_id], s.qty, v.due, s.complete ? "Complete" : (v.status || "")].map(esc).join(","));
       }
     });
   });
@@ -335,8 +368,9 @@ api.get("/vendor/:id/workorder", (req, res) => {
   const pis = {};
   db.prepare("SELECT id, pi_no FROM pis").all().forEach((p) => (pis[p.id] = p.pi_no));
   const items = [];
-  all.forEach((s) => s.vendor_due.forEach((vd) => {
-    if (vd && vd.vendorId == req.params.id) items.push({ item: s.item_no, buyer_no: s.buyer_no, desc: s.description, pi: pis[s.pi_id], qty: s.qty, due: vd.due, status: s.complete ? "Complete" : s.status });
+  all.forEach((s) => (s.vendors || []).forEach((v) => {
+    if (v.vendor_id == req.params.id) items.push({ item: s.item_no, buyer_no: s.buyer_no, desc: s.description,
+      pi: pis[s.pi_id], qty: s.qty, due: v.due, status: s.complete ? "Complete" : v.status });
   }));
   items.sort((a, b) => (a.due || "").localeCompare(b.due || ""));
   res.json({ vendor: v.name, lead_time: v.lead_time_days, phone: v.phone, items, generated: D.todayISO() });
@@ -501,12 +535,15 @@ api.post("/import/commit", (req, res) => {
     for (const s of items) {
       const prior = D.priorSettings(s.item_no, req.companyId);
       if (prior) carried++;
-      insertSKU.run(piId, s.item_no, s.buyer_no, s.description, s.qty,
+      const info = insertSKU.run(piId, s.item_no, s.buyer_no, s.description, s.qty,
         prior ? prior.gift_box : (pi.gift_box_all ? 1 : 0),
         prior ? prior.gift_box_vendor_id : null,
-        prior ? prior.labels_needed : 0,
-        prior ? prior.v1_id : null, prior ? prior.v2_id : null,
-        prior ? prior.v3_id : null, prior ? prior.v4_id : null);
+        prior ? prior.labels_needed : 0, null, null, null, null);
+      // reuse the vendor line-up from the last time this item was ordered
+      if (prior && prior.prev_sku_id) {
+        db.prepare(`INSERT INTO sku_vendors (sku_id, vendor_id, role)
+          SELECT ?, vendor_id, role FROM sku_vendors WHERE sku_id = ?`).run(info.lastInsertRowid, prior.prev_sku_id);
+      }
       count++;
     }
     return { piId, count, carried };
