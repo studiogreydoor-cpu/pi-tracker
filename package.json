@@ -1,7 +1,7 @@
 {
   "name": "pi-production-tracker",
   "version": "1.0.0",
-  "description": "Standalone PI / SKU production tracker with ERP Excel-CSV import",
+  "description": "PI / SKU production tracker",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js"
