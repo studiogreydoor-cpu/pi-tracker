@@ -9,9 +9,18 @@ const db = new Database(path.join(DATA_DIR, "tracker.db"));
 db.pragma("journal_mode = WAL");
 
 db.exec(`
-CREATE TABLE IF NOT EXISTS buyers (
+CREATE TABLE IF NOT EXISTS companies (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
+  short_name TEXT DEFAULT '',
+  accent TEXT DEFAULT '',
+  archived INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS buyers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id INTEGER,
+  name TEXT NOT NULL,
   address TEXT DEFAULT '',
   contact TEXT DEFAULT '',
   email TEXT DEFAULT '',
@@ -21,7 +30,8 @@ CREATE TABLE IF NOT EXISTS buyers (
 
 CREATE TABLE IF NOT EXISTS vendors (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE,
+  company_id INTEGER,
+  name TEXT NOT NULL,
   lead_time_days INTEGER DEFAULT 0,
   phone TEXT DEFAULT '',
   notes TEXT DEFAULT ''
@@ -29,6 +39,7 @@ CREATE TABLE IF NOT EXISTS vendors (
 
 CREATE TABLE IF NOT EXISTS pis (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id INTEGER,
   pi_no TEXT NOT NULL,
   po_no TEXT DEFAULT '',
   buyer_id INTEGER REFERENCES buyers(id),
@@ -70,6 +81,25 @@ CREATE TABLE IF NOT EXISTS skus (
 CREATE INDEX IF NOT EXISTS idx_skus_pi ON skus(pi_id);
 CREATE INDEX IF NOT EXISTS idx_skus_item ON skus(item_no);
 `);
+
+// --- migrations for databases created before multi-company support ---
+function hasCol(table, col) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
+}
+["pis", "vendors", "buyers"].forEach((t) => {
+  if (!hasCol(t, "company_id")) {
+    try { db.exec(`ALTER TABLE ${t} ADD COLUMN company_id INTEGER`); } catch (e) {}
+  }
+});
+// Ensure at least one company exists, and attach any orphan rows to it.
+let firstCompany = db.prepare("SELECT * FROM companies ORDER BY id LIMIT 1").get();
+if (!firstCompany) {
+  const id = db.prepare("INSERT INTO companies (name, short_name) VALUES (?,?)").run("My Company", "MC").lastInsertRowid;
+  firstCompany = db.prepare("SELECT * FROM companies WHERE id = ?").get(id);
+}
+["pis", "vendors", "buyers"].forEach((t) => {
+  db.prepare(`UPDATE ${t} SET company_id = ? WHERE company_id IS NULL`).run(firstCompany.id);
+});
 
 // ---------- date helpers (stored ISO, displayed DD/MM/YY) ----------
 function addDays(iso, days) {
@@ -138,9 +168,12 @@ function decorateSku(sku, vendorsById, pi) {
     late: status === "overdue" ? 1 : 0 };
 }
 
-function vendorsById() {
+function vendorsById(companyId) {
   const map = {};
-  db.prepare("SELECT * FROM vendors").all().forEach((v) => (map[v.id] = v));
+  const rows = companyId
+    ? db.prepare("SELECT * FROM vendors WHERE company_id = ?").all(companyId)
+    : db.prepare("SELECT * FROM vendors").all();
+  rows.forEach((v) => (map[v.id] = v));
   return map;
 }
 
@@ -151,21 +184,30 @@ function getSkusForPI(piId) {
     .map((s) => decorateSku(s, vmap, pi));
 }
 
-function getAllSkusDecorated() {
+function getAllSkusDecorated(companyId) {
   const vmap = vendorsById();
   const pis = {};
-  db.prepare("SELECT * FROM pis").all().forEach((p) => (pis[p.id] = p));
-  return db.prepare("SELECT * FROM skus").all().map((s) => decorateSku(s, vmap, pis[s.pi_id]));
+  const piRows = companyId
+    ? db.prepare("SELECT * FROM pis WHERE company_id = ?").all(companyId)
+    : db.prepare("SELECT * FROM pis").all();
+  piRows.forEach((p) => (pis[p.id] = p));
+  const skus = companyId
+    ? db.prepare("SELECT s.* FROM skus s JOIN pis p ON p.id = s.pi_id WHERE p.company_id = ?").all(companyId)
+    : db.prepare("SELECT * FROM skus").all();
+  return skus.map((s) => decorateSku(s, vmap, pis[s.pi_id]));
 }
 
-function getPIs({ includeShipped = false } = {}) {
+function getPIs({ includeShipped = false, companyId = null } = {}) {
+  const where = [];
+  if (!includeShipped) where.push("p.shipped = 0");
+  if (companyId) where.push("p.company_id = " + Number(companyId));
   const rows = db.prepare(`
     SELECT p.*, b.name AS buyer_name
     FROM pis p LEFT JOIN buyers b ON b.id = p.buyer_id
-    ${includeShipped ? "" : "WHERE p.shipped = 0"}
+    ${where.length ? "WHERE " + where.join(" AND ") : ""}
     ORDER BY COALESCE(p.pi_date, p.created_at) DESC, p.id DESC
   `).all();
-  const all = getAllSkusDecorated();
+  const all = getAllSkusDecorated(companyId);
   return rows.map((p) => {
     const mine = all.filter((s) => s.pi_id === p.id);
     const ordered = mine.reduce((t, s) => t + (s.qty || 0), 0);
@@ -181,27 +223,34 @@ function getPIs({ includeShipped = false } = {}) {
 }
 
 // Carry-over: reuse the previous setup for a repeat item number.
-function priorSettings(itemNo) {
+function priorSettings(itemNo, companyId) {
+  if (companyId) {
+    return db.prepare(`
+      SELECT s.gift_box, s.gift_box_vendor_id, s.labels_needed, s.v1_id, s.v2_id, s.v3_id, s.v4_id
+      FROM skus s JOIN pis p ON p.id = s.pi_id
+      WHERE s.item_no = ? AND p.company_id = ? ORDER BY s.id DESC LIMIT 1
+    `).get(itemNo, companyId);
+  }
   return db.prepare(`
     SELECT gift_box, gift_box_vendor_id, labels_needed, v1_id, v2_id, v3_id, v4_id
     FROM skus WHERE item_no = ? ORDER BY id DESC LIMIT 1
   `).get(itemNo);
 }
 
-function findOrCreateBuyer(name, address) {
+function findOrCreateBuyer(name, address, companyId) {
   if (!name || !name.trim()) return null;
   const clean = name.trim();
-  const found = db.prepare("SELECT * FROM buyers WHERE lower(name) = lower(?)").get(clean);
+  const found = db.prepare("SELECT * FROM buyers WHERE lower(name) = lower(?) AND company_id IS ?").get(clean, companyId || null);
   if (found) return found.id;
-  return db.prepare("INSERT INTO buyers (name, address) VALUES (?, ?)").run(clean, address || "").lastInsertRowid;
+  return db.prepare("INSERT INTO buyers (name, address, company_id) VALUES (?,?,?)").run(clean, address || "", companyId || null).lastInsertRowid;
 }
 
-function findOrCreateVendor(name) {
+function findOrCreateVendor(name, companyId) {
   if (!name || !String(name).trim()) return null;
   const clean = String(name).trim();
-  const found = db.prepare("SELECT * FROM vendors WHERE lower(name) = lower(?)").get(clean);
+  const found = db.prepare("SELECT * FROM vendors WHERE lower(name) = lower(?) AND company_id IS ?").get(clean, companyId || null);
   if (found) return found.id;
-  return db.prepare("INSERT INTO vendors (name) VALUES (?)").run(clean).lastInsertRowid;
+  return db.prepare("INSERT INTO vendors (name, company_id) VALUES (?,?)").run(clean, companyId || null).lastInsertRowid;
 }
 
 module.exports = { db, addDays, todayISO, daysBetween, parseDate, decorateSku, vendorsById,

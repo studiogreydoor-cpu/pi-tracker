@@ -1,371 +1,626 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>PI Production Tracker</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grey Door Studio · Production</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
-  :root{--bg:#F6F1E7;--card:#FFFDF9;--line:#E9E0D0;--ink:#332A20;--muted:#8C7B63;--deep:#23392F;--green:#2E7D4F;--amber:#C98A12;--red:#B23A3A;}
+  :root{
+    --bg:#F5F1E8; --bg2:#EBE5D8; --card:#FFFDF8; --card2:#F7F2E7; --line:#E2DACA;
+    --ink:#252B21; --muted:#7C7565; --faint:#ADA593;
+    --green:#1F4D36; --green-l:#2E6B4A; --brass:#C08A2E; --brass-d:#9A6D1F;
+    /* status colours — deliberately vivid so the picture reads instantly */
+    --late:#D7362A; --late-bg:#FCE8E6; --late-line:#F3B7B1;
+    --soon:#E89611; --soon-bg:#FDF1DC; --soon-line:#F5D08A;
+    --ok:#1E8E4E; --ok-bg:#E4F4EA; --ok-line:#A9DCBE;
+    --done:#8A8578; --done-bg:#EFEBE1;
+    --shadow:0 1px 2px rgba(37,43,33,.04),0 6px 20px rgba(37,43,33,.06);
+  }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Work Sans',system-ui,sans-serif;font-size:14px}
-  .ribbon{height:8px;background:repeating-linear-gradient(135deg,#2E5E4E 0 18px,#3C7A65 18px 36px)}
-  .wrap{max-width:1250px;margin:0 auto;padding:18px 16px 70px}
-  h1{font-family:'Fraunces',serif;font-size:24px;margin:0;color:var(--deep)}
-  h2{font-family:'Fraunces',serif;font-size:18px;margin:0 0 12px;color:var(--deep)}
-  .muted{color:var(--muted);font-size:12.5px}
-  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  .between{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:14px}
-  button{font-family:inherit;font-size:13px;font-weight:600;border-radius:8px;padding:8px 14px;cursor:pointer;border:1.5px solid var(--deep);background:transparent;color:var(--deep)}
-  button.solid{background:var(--deep);color:#F6F1E7;border-color:var(--deep)}
-  button.tiny{padding:4px 9px;font-size:12px}
-  button:disabled{opacity:.5;cursor:default}
-  input,select,textarea{font-family:inherit;font-size:13px;padding:7px 9px;border:1.5px solid #E4DACC;border-radius:7px;background:#FFFDF9;color:var(--ink);outline:none;width:100%}
-  input:focus,select:focus{border-color:#2E5E4E}
-  label{display:block;font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Outfit',system-ui,sans-serif;font-size:14px;-webkit-font-smoothing:antialiased}
+  .app{display:flex;min-height:100vh}
+  .side{width:238px;flex:none;background:var(--green);color:#E9EFE9;padding:22px 15px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:3px}
+  .brand{display:flex;align-items:center;gap:11px;padding:0 6px 16px;border-bottom:1px solid rgba(255,255,255,.13);margin-bottom:10px}
+  .brand .mark{width:38px;height:38px;border-radius:10px;background:var(--brass);display:grid;place-items:center;font-family:'Fraunces',serif;font-weight:700;color:#1B2418;font-size:19px;flex:none;overflow:hidden}
+  .brand .mark img{width:100%;height:100%;object-fit:cover}
+  .brand b{font-family:'Fraunces',serif;font-weight:600;font-size:15px;line-height:1.15;color:#FFFDF8}
+  .brand span{display:block;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:#9FB6A5;margin-top:2px}
+  /* company switcher */
+  .cswitch{position:relative;margin:0 0 12px}
+  .cswitch>button{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.14);color:#E9EFE9;padding:9px 11px;border-radius:9px;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit}
+  .cswitch>button:hover{background:rgba(255,255,255,.15)}
+  .cmenu{display:none;position:absolute;left:0;right:0;top:calc(100% + 5px);background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.18);z-index:50;overflow:hidden}
+  .cmenu.open{display:block}
+  .cmenu button{width:100%;text-align:left;background:none;border:none;padding:10px 12px;font-size:13px;color:var(--ink);cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:8px}
+  .cmenu button:hover{background:var(--card2)}
+  .cmenu button.on{color:var(--green);font-weight:600}
+  .cmenu .sep{border-top:1px solid var(--line)}
+  .nav{display:flex;flex-direction:column;gap:2px}
+  .nav button{display:flex;align-items:center;gap:11px;width:100%;text-align:left;background:none;border:none;color:#BCCFC0;padding:10px 12px;border-radius:9px;font-size:14px;font-weight:500;cursor:pointer;font-family:inherit;transition:background .15s,color .15s}
+  .nav button:hover{background:rgba(255,255,255,.09);color:#fff}
+  .nav button.on{background:var(--brass);color:#1B2418;font-weight:600}
+  .nav .ic{width:18px;text-align:center;font-size:14px}
+  .side .foot{margin-top:auto;padding-top:14px;border-top:1px solid rgba(255,255,255,.13)}
+  .side .foot button{background:none;border:none;color:#9FB6A5;cursor:pointer;font-size:12.5px;padding:6px 0;font-family:inherit}
+  .main{flex:1;min-width:0;padding:26px 32px 70px}
+  .head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:22px;flex-wrap:wrap}
+  h1{font-family:'Fraunces',serif;font-weight:600;font-size:26px;margin:0;color:var(--ink)}
+  .sub{color:var(--muted);font-size:13px;margin-top:3px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;box-shadow:var(--shadow)}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}
+  .tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:15px 17px;position:relative;overflow:hidden;box-shadow:var(--shadow)}
+  .tile .k{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .tile .v{font-family:'Fraunces',serif;font-weight:700;font-size:30px;line-height:1.05;margin-top:7px;color:var(--ink)}
+  .tile.clay .v,.tile.brass .v{color:var(--brass-d)} .tile.late .v,.tile.red .v{color:var(--late)} .tile.green .v{color:var(--ok)}
+  .tile .edge{position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--green-l)}
+  .tile.clay .edge,.tile.brass .edge{background:var(--brass)} .tile.late .edge,.tile.red .edge{background:var(--late)} .tile.green .edge{background:var(--ok)}
+  .charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:20px}
+  .chart-card h3{font-family:'Fraunces',serif;font-weight:600;font-size:15px;margin:0 0 12px;color:var(--ink)}
+  .chart-wrap{position:relative;height:220px}
+  .tablewrap{overflow:auto;border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:var(--shadow)}
   table{width:100%;border-collapse:collapse;font-size:13px}
-  th{text-align:left;background:#F1EADC;padding:8px 10px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B5D49;position:sticky;top:0}
-  td{padding:6px 10px;border-top:1px solid #F0E9DB;vertical-align:middle}
-  tr.late td{background:#FBEDEA}
-  .scroll{overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:11px;background:var(--card)}
-  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0}
-  .tabs button{border-color:var(--line);background:var(--card);color:#6B5D49}
-  .tabs button.on{background:var(--deep);color:#F6F1E7;border-color:var(--deep)}
-  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
-  .stat b{display:block;font-family:'Fraunces',serif;font-size:23px;color:var(--deep)}
-  .bar{height:8px;background:#EFE7D8;border-radius:99px;overflow:hidden;min-width:70px}
-  .bar span{display:block;height:100%;background:var(--green);border-radius:99px}
-  .pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:600;color:#fff}
-  .g{background:var(--green)}.a{background:var(--amber)}.r{background:var(--red)}.d{background:#8C7B63}
-  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
-  .msg{padding:9px 13px;border-radius:8px;font-size:13px;margin-bottom:12px}
-  .err{background:#F7E7E4;border:1px solid #E4BDB5;color:#8C3B2E}
-  .ok{background:#E7F0E9;border:1px solid #BFD8C6;color:#2E5E4E}
-  .num{width:74px}.dt{width:132px}
-  #login{max-width:330px;margin:16vh auto}
+  th{text-align:left;background:var(--bg2);color:var(--muted);padding:10px 13px;font-size:10px;letter-spacing:.07em;text-transform:uppercase;font-weight:700;position:sticky;top:0;z-index:1}
+  td{padding:10px 13px;border-top:1px solid var(--line);vertical-align:middle}
+  tr:hover td{background:var(--card2)}
+  .rail{border-left:5px solid transparent}
+  .row-green{border-left-color:var(--ok);background:linear-gradient(90deg,var(--ok-bg) 0,transparent 90px)}
+  .row-amber{border-left-color:var(--soon);background:linear-gradient(90deg,var(--soon-bg) 0,transparent 90px)}
+  .row-red{border-left-color:var(--late);background:linear-gradient(90deg,var(--late-bg) 0,transparent 90px)}
+  .row-done{border-left-color:var(--faint)}
+  .pill{display:inline-flex;align-items:center;gap:5px;padding:3px 11px;border-radius:99px;font-size:11px;font-weight:700;white-space:nowrap}
+  .p-green{background:var(--ok-bg);color:var(--ok)} .p-amber{background:var(--soon-bg);color:#9A6205}
+  .p-red{background:var(--late);color:#fff} .p-done{background:var(--done-bg);color:var(--done)}
+  .vtag{display:inline-block;padding:2px 9px;border-radius:6px;font-size:11.5px;font-weight:600;margin:1px}
+  .bar{height:8px;background:var(--bg2);border-radius:99px;overflow:hidden;min-width:60px}
+  .bar span{display:block;height:100%;border-radius:99px;background:var(--ok)}
+  .code{font-weight:700;color:var(--green)}
+  .desc{color:var(--muted);font-size:12.5px}
+  button.btn{font-family:inherit;font-size:13px;font-weight:600;border-radius:9px;padding:9px 16px;cursor:pointer;border:1.5px solid var(--green);background:var(--green);color:#F5F1E8;transition:background .15s}
+  button.btn:hover{background:var(--green-l)}
+  button.btn.ghost{background:transparent;color:var(--green)}
+  button.btn.ghost:hover{background:var(--card2)}
+  button.btn.brass{background:var(--brass);border-color:var(--brass);color:#231A05}
+  button.btn.danger{background:var(--late);border-color:var(--late);color:#fff}
+  button.btn.tiny{padding:4px 11px;font-size:12px}
+  input,select,textarea{font-family:inherit;font-size:13px;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);outline:none;width:100%}
+  input:focus,select:focus{border-color:var(--brass)}
+  input[type=checkbox]{width:auto;accent-color:var(--green)}
+  label{display:block;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .chips button{padding:6px 14px;border-radius:99px;font-size:12.5px;font-weight:600;cursor:pointer;border:1.5px solid var(--line);background:var(--card);color:var(--muted)}
+  .chips button.on{background:var(--green);color:#F5F1E8;border-color:var(--green)}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:11px}
+  .msg{padding:11px 15px;border-radius:9px;font-size:13px;margin-bottom:15px;font-weight:500}
+  .msg.ok{background:var(--ok-bg);border:1px solid var(--ok-line);color:var(--ok)}
+  .msg.err{background:var(--late-bg);border:1px solid var(--late-line);color:var(--late)}
+  .empty{padding:42px;text-align:center;color:var(--muted)}
+  /* big focus blocks */
+  .focus{border-radius:16px;padding:20px 22px;margin-bottom:18px;box-shadow:var(--shadow)}
+  .focus.late{background:var(--late-bg);border:2px solid var(--late-line)}
+  .focus.week{background:var(--card);border:1px solid var(--line)}
+  .focus h2{font-family:'Fraunces',serif;font-weight:700;font-size:19px;margin:0;display:flex;align-items:center;gap:11px}
+  .focus.late h2{color:var(--late)}
+  .focus .count{font-family:'Fraunces',serif;font-weight:700;font-size:40px;line-height:1}
+  .focus.late .count{color:var(--late)}
+  .focus.week .count{color:var(--soon)}
+  .fhead{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+  .flist{display:flex;flex-direction:column;gap:7px}
+  .frow{display:grid;grid-template-columns:auto 1fr auto auto;gap:12px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 13px}
+  .focus.late .frow{border-color:var(--late-line)}
+  .frow .item{font-weight:700;color:var(--green);white-space:nowrap}
+  .frow .meta{color:var(--muted);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .frow .when{font-weight:700;font-size:12.5px;white-space:nowrap}
+  .weekgroup{margin-bottom:20px}
+  .weekgroup h4{font-family:'Fraunces',serif;font-weight:600;font-size:15px;margin:0 0 4px;color:var(--green)}
+  .calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:7px;margin-top:9px}
+  .calcell{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 9px;min-height:80px}
+  .calcell .d{font-size:10px;color:var(--muted);margin-bottom:6px;font-weight:600}
+  .calcell.today{border-color:var(--brass);border-width:2px}
+  .calitem{font-size:11px;padding:3px 7px;border-radius:5px;margin-bottom:4px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ci-red{background:var(--late);color:#fff} .ci-amber{background:var(--soon-bg);color:#9A6205;border:1px solid var(--soon-line)} .ci-green{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-line)}
+  #login{min-height:100vh;display:grid;place-items:center;width:100%}
+  #login .box{width:350px;max-width:90vw}
+  .menu-btn{display:none}
+  @media(max-width:860px){
+    .side{position:fixed;left:-260px;z-index:40;transition:left .2s;box-shadow:0 0 50px rgba(0,0,0,.25)}
+    .side.open{left:0}
+    .menu-btn{display:inline-grid;place-items:center;width:40px;height:40px;border-radius:9px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer;font-size:18px}
+    .main{padding:18px 15px 60px}
+    .backdrop{display:none;position:fixed;inset:0;background:rgba(20,26,18,.4);z-index:35}
+    .backdrop.show{display:block}
+    .calgrid{grid-template-columns:1fr}
+    .frow{grid-template-columns:auto 1fr auto}
+    .frow .meta{display:none}
+  }
+  @media print{.side,.head .menu-btn,#pactions,#msg,.nav{display:none!important}.main{padding:0}}
+  @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
-<div class="ribbon"></div>
 
 <div id="login" style="display:none">
-  <div class="card">
-    <h2>PI Production Tracker</h2>
+  <div class="box card">
+    <div class="brand" style="border:none;margin:0 0 6px;padding:0">
+      <div class="mark" id="loginmark">G</div><div><b>Grey Door Studio</b><span>Production Tracker</span></div>
+    </div>
     <div id="loginErr"></div>
     <label>Password</label>
-    <input id="pw" type="password" onkeydown="if(event.key==='Enter')login()" />
-    <button class="solid" style="width:100%;margin-top:10px" onclick="login()">Sign in</button>
+    <input id="pw" type="password" onkeydown="if(event.key==='Enter')login()" autofocus>
+    <button class="btn" style="width:100%;margin-top:12px" onclick="login()">Sign in</button>
   </div>
 </div>
 
-<div class="wrap" id="app" style="display:none">
-  <div class="between">
-    <div><h1>PI Production Tracker</h1><div class="muted">Orders, vendors and timelines — live from your own database</div></div>
-    <button class="tiny" onclick="logout()">Sign out</button>
-  </div>
+<div class="app" id="app" style="display:none">
+  <div class="backdrop" id="backdrop" onclick="toggleNav(false)"></div>
+  <aside class="side" id="side">
+    <div class="brand"><div class="mark" id="navmark">G</div><div><b id="brandname">Grey Door Studio</b><span>Production</span></div></div>
+    <div class="cswitch">
+      <button onclick="toggleCMenu(event)"><span id="cname">Loading…</span><span style="opacity:.7">▾</span></button>
+      <div class="cmenu" id="cmenu"></div>
+    </div>
+    <nav class="nav" id="nav">
+      <button data-t="dashboard" onclick="go('dashboard')"><span class="ic">◱</span> Dashboard</button>
+      <button data-t="orders" onclick="go('orders')"><span class="ic">▤</span> Orders</button>
+      <button data-t="items" onclick="go('items')"><span class="ic">◈</span> Items</button>
+      <button data-t="vendors" onclick="go('vendors')"><span class="ic">⚒</span> Vendors</button>
+      <button data-t="insights" onclick="go('insights')"><span class="ic">◔</span> Insights</button>
+      <button data-t="buyers" onclick="go('buyers')"><span class="ic">✦</span> Buyers</button>
+      <button data-t="import" onclick="go('import')"><span class="ic">↑</span> Import PI</button>
+    </nav>
+    <div class="foot"><button onclick="logout()">Sign out</button></div>
+  </aside>
 
-  <div class="tabs">
-    <button data-t="orders" onclick="go('orders')">Orders</button>
-    <button data-t="late" onclick="go('late')">Late</button>
-    <button data-t="vendors" onclick="go('vendors')">Vendors</button>
-    <button data-t="buyers" onclick="go('buyers')">Buyers</button>
-    <button data-t="import" onclick="go('import')">Import from ERP</button>
-  </div>
-
-  <div id="msg"></div>
-  <div id="view"></div>
+  <main class="main">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="menu-btn" onclick="toggleNav(true)">☰</button>
+        <div><h1 id="ptitle">Dashboard</h1><div class="sub" id="psub"></div></div>
+      </div>
+      <div id="pactions"></div>
+    </div>
+    <div id="msg"></div>
+    <div id="view"></div>
+  </main>
 </div>
 
 <script>
-const $ = (s) => document.querySelector(s);
-let TAB = "orders", VENDORS = [], BUYERS = [], OPEN_PI = null, IMPORT = null;
+const $=(s)=>document.querySelector(s);
+let TAB="dashboard", VENDORS=[], BUYERS=[], OPEN_PI=null, IMPORT=null, CHARTS=[], ITEM_FILTER="all", ITEM_COLOR="status", COMPANIES=[], ACTIVE_C=null;
+const VCOLORS=["#1F4D36","#C08A2E","#2E6B4A","#B5651D","#4A7C59","#8A6D3B","#356859","#A67C00"];
+const vendorColor=(id)=>VCOLORS[(Number(id)||0)%VCOLORS.length];
 
-async function api(url, opts = {}) {
-  const r = await fetch("/api" + url, { headers: { "Content-Type": "application/json" }, ...opts });
-  if (r.status === 401) { showLogin(); throw new Error("Please sign in"); }
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || "Request failed");
+async function api(url,opts={}){
+  const r=await fetch("/api"+url,{headers:{"Content-Type":"application/json"},...opts});
+  if(r.status===401){showLogin();throw new Error("Please sign in");}
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.error||"Request failed");
   return j;
 }
-function msg(text, cls = "ok") { $("#msg").innerHTML = text ? `<div class="msg ${cls}">${esc(text)}</div>` : ""; if (text) setTimeout(() => { if ($("#msg").textContent === text) $("#msg").innerHTML = ""; }, 4000); }
-function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
-function dmy(iso) { if (!iso) return ""; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y.slice(2)}`; }
-function bar(pct) { return `<div class="row" style="gap:6px"><div class="bar" style="flex:1"><span style="width:${pct}%"></span></div><span class="muted" style="min-width:32px">${pct}%</span></div>`; }
-function statusPill(s, days) {
-  if (!s) return "";
-  const map = { green: ["g", "On track"], amber: ["a", "Due soon"], red: ["r", "Last 5 days"], overdue: ["r", "OVERDUE"], done: ["d", "Complete"] };
-  const [c, t] = map[s] || ["d", s];
-  return `<span class="pill ${c}">${t}${s !== "done" && days != null ? " · " + (days < 0 ? -days + "d late" : days + "d") : ""}</span>`;
+function msg(t,cls="ok"){$("#msg").innerHTML=t?`<div class="msg ${cls}">${esc(t)}</div>`:"";if(t)setTimeout(()=>{if($("#msg").textContent===t)$("#msg").innerHTML="";},4000);}
+function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function dmy(iso){if(!iso)return"";const p=String(iso).split("-");return p.length===3?`${p[2]}/${p[1]}/${p[0].slice(2)}`:iso;}
+function destroyCharts(){CHARTS.forEach(c=>{try{c.destroy()}catch(e){}});CHARTS=[];}
+Chart.defaults.color="#7C7565";Chart.defaults.font.family="Outfit";Chart.defaults.borderColor="#E2DACA";
+function statusPill(s,days){
+  if(!s)return"";
+  const m={green:["p-green","On track"],amber:["p-amber","Due soon"],red:["p-red","Last 5 days"],overdue:["p-red","Overdue"],done:["p-done","Complete"]};
+  const[c,t]=m[s]||["p-done",s];
+  const d=(s!=="done"&&days!=null)?(days<0?` · ${-days}d late`:` · ${days}d`):"";
+  return `<span class="pill ${c}">${t}${d}</span>`;
+}
+function rowClass(s){return s?("row-"+(s==="overdue"?"red":s)):"";}
+function barEl(pct,color){return `<div class="bar"><span style="width:${pct}%${color?`;background:${color}`:""}"></span></div>`;}
+
+function showLogin(){$("#login").style.display="grid";$("#app").style.display="none";}
+async function login(){try{await api("/login",{method:"POST",body:JSON.stringify({password:$("#pw").value})});$("#loginErr").innerHTML="";boot();}catch(e){$("#loginErr").innerHTML=`<div class="msg err">${esc(e.message)}</div>`;}}
+async function logout(){await fetch("/api/logout",{method:"POST"});showLogin();}
+function toggleNav(open){$("#side").classList.toggle("open",open);$("#backdrop").classList.toggle("show",open);}
+
+async function boot(){
+  try{
+    const c=await api("/companies");COMPANIES=c.companies;ACTIVE_C=c.active;
+    [VENDORS,BUYERS]=await Promise.all([api("/vendors"),api("/buyers")]);
+    renderCSwitch();
+    $("#login").style.display="none";$("#app").style.display="flex";go(TAB);
+  }catch(e){showLogin();}
+}
+function renderCSwitch(){
+  const cur=COMPANIES.find(c=>c.id===ACTIVE_C)||COMPANIES[0]||{name:"Set up a company"};
+  $("#cname").textContent=cur.name;
+  $("#brandname").textContent=cur.name;
+  $("#navmark").textContent=(cur.short_name||cur.name||"?").slice(0,2).toUpperCase();
+  $("#cmenu").innerHTML=COMPANIES.map(c=>`<button class="${c.id===ACTIVE_C?"on":""}" onclick="switchCompany(${c.id})">${c.id===ACTIVE_C?"✓":"　"} ${esc(c.name)}</button>`).join("")
+    +`<div class="sep"></div><button onclick="addCompany()">＋ Add company</button><button onclick="renameCompany()">✎ Rename current</button>`;
+}
+function toggleCMenu(e){e.stopPropagation();$("#cmenu").classList.toggle("open");}
+document.addEventListener("click",()=>{const m=$("#cmenu");if(m)m.classList.remove("open");});
+async function switchCompany(id){
+  await api(`/companies/${id}/activate`,{method:"POST"});
+  ACTIVE_C=id;OPEN_PI=null;
+  [VENDORS,BUYERS]=await Promise.all([api("/vendors"),api("/buyers")]);
+  renderCSwitch();go(TAB);msg("Switched to "+(COMPANIES.find(c=>c.id===id)||{}).name);
+}
+async function addCompany(){
+  const name=prompt("Company name:");if(!name||!name.trim())return;
+  try{const c=await api("/companies",{method:"POST",body:JSON.stringify({name:name.trim()})});
+    COMPANIES.push(c);await switchCompany(c.id);}catch(e){msg(e.message,"err");}
+}
+async function renameCompany(){
+  const cur=COMPANIES.find(c=>c.id===ACTIVE_C);if(!cur)return;
+  const name=prompt("Rename company:",cur.name);if(!name||!name.trim())return;
+  await api(`/companies/${cur.id}`,{method:"PATCH",body:JSON.stringify({name:name.trim()})});
+  cur.name=name.trim();renderCSwitch();msg("Renamed");
+}
+function go(t){
+  TAB=t;OPEN_PI=(t==="orders")?OPEN_PI:null;destroyCharts();toggleNav(false);
+  document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on",b.dataset.t===t));
+  const titles={dashboard:["Dashboard","Live overview of production"],orders:["Orders","Proforma invoices and their progress"],items:["Items","Every SKU, its vendors and due dates"],vendors:["Vendors","Schedules, calendars and work orders"],insights:["Insights","Charts and trends"],buyers:["Buyers","Your customer directory"],import:["Import PI","Read a proforma invoice from your ERP"]};
+  $("#ptitle").textContent=titles[t][0];$("#psub").textContent=titles[t][1];$("#pactions").innerHTML="";
+  ({dashboard:viewDashboard,orders:viewOrders,items:viewItems,vendors:viewVendors,buyers:viewBuyers,import:viewImport,insights:viewInsights}[t])();
 }
 
-// ---------- auth ----------
-function showLogin() { $("#login").style.display = "block"; $("#app").style.display = "none"; }
-async function login() {
-  try {
-    await api("/login", { method: "POST", body: JSON.stringify({ password: $("#pw").value }) });
-    $("#loginErr").innerHTML = ""; boot();
-  } catch (e) { $("#loginErr").innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
-}
-async function logout() { await fetch("/api/logout", { method: "POST" }); showLogin(); }
-
-async function boot() {
-  try {
-    [VENDORS, BUYERS] = await Promise.all([api("/vendors"), api("/buyers")]);
-    $("#login").style.display = "none"; $("#app").style.display = "block";
-    go(TAB);
-  } catch (e) { showLogin(); }
-}
-function go(t) {
-  TAB = t;
-  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.t === t));
-  ({ orders: viewOrders, late: viewLate, vendors: viewVendors, buyers: viewBuyers, import: viewImport }[t])();
-}
-
-// ---------- orders ----------
-async function viewOrders() {
-  if (OPEN_PI) return viewSkus(OPEN_PI);
-  const [pis, dash] = await Promise.all([api("/pis"), api("/dashboard")]);
-  $("#view").innerHTML = `
-    <div class="stats">
-      <div class="card stat"><span class="muted">Active orders</span><b>${dash.active_orders}</b></div>
-      <div class="card stat"><span class="muted">Open SKUs</span><b>${dash.open_skus}</b></div>
-      <div class="card stat"><span class="muted">Late SKUs</span><b style="color:${dash.late_skus ? "var(--red)" : "var(--deep)"}">${dash.late_skus}</b></div>
-      <div class="card stat"><span class="muted">Pieces still due</span><b>${dash.pieces_due.toLocaleString("en-IN")}</b></div>
-    </div>
-    <div class="between" style="margin-bottom:8px"><h2>Active orders</h2>
-      <label class="row" style="gap:6px;text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--muted)">
-        <input type="checkbox" style="width:auto" id="showAll" onchange="viewOrdersAll(this.checked)"> show shipped
-      </label></div>
-    <div class="scroll"><table>
-      <thead><tr><th>PI</th><th>Buyer</th><th>PI date</th><th>Ex-factory</th><th>Ship</th><th>SKUs</th><th>Progress</th><th>Late</th><th></th></tr></thead>
-      <tbody>${pis.map(rowPI).join("") || `<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">No orders yet — import one from your ERP.</td></tr>`}</tbody>
-    </table></div>`;
-}
-async function viewOrdersAll(all) {
-  const pis = await api("/pis" + (all ? "?all=1" : ""));
-  document.querySelector("#view tbody").innerHTML = pis.map(rowPI).join("");
-}
-function rowPI(p) {
-  return `<tr>
-    <td><b>${esc(p.pi_no)}</b><div class="muted">${esc(p.po_no || "")}</div></td>
-    <td>${esc(p.buyer_name || "")}</td>
-    <td>${dmy(p.pi_date)}</td><td>${dmy(p.ex_factory_date)}</td><td>${dmy(p.ship_date)}</td>
-    <td>${p.sku_count}</td>
-    <td style="min-width:150px">${bar(p.progress_pct)}<div class="muted">${p.in_hand_qty}/${p.ordered_qty} pcs</div></td>
-    <td>${p.late_count ? `<span class="pill r">${p.late_count}</span>` : ""}</td>
-    <td class="row" style="gap:5px">
-      <button class="tiny" onclick="openPI(${p.id})">Open</button>
-      <button class="tiny" onclick="tickPI(${p.id},'packed')">${p.packed ? "✓" : ""} Packed</button>
-      <button class="tiny" onclick="tickPI(${p.id},'shipped')">${p.shipped ? "✓" : ""} Shipped</button>
-    </td></tr>`;
-}
-async function tickPI(id, field) {
-  await api("/pis/" + id, { method: "PATCH", body: JSON.stringify({ [field]: 1 }) });
-  msg("Order marked " + field); viewOrders();
-}
-function openPI(id) { OPEN_PI = id; viewSkus(id); }
-
-// ---------- SKUs ----------
-async function viewSkus(piId) {
-  const [skus, pis] = await Promise.all([api(`/pis/${piId}/skus`), api("/pis?all=1")]);
-  const pi = pis.find((p) => p.id === piId) || {};
-  const vopts = (sel) => `<option value=""></option>` + VENDORS.map((v) => `<option value="${v.id}"${sel == v.id ? " selected" : ""}>${esc(v.name)}${v.lead_time_days ? " (" + v.lead_time_days + "d)" : ""}</option>`).join("");
-  $("#view").innerHTML = `
-    <button class="tiny" onclick="OPEN_PI=null;viewOrders()">← All orders</button>
-    <div class="card" style="margin:10px 0">
-      <div class="between">
-        <div><h2 style="margin:0">PI ${esc(pi.pi_no || "")}</h2>
-          <div class="muted">${esc(pi.buyer_name || "")} · PO ${esc(pi.po_no || "—")} · PI ${dmy(pi.pi_date)} · Ex-factory ${dmy(pi.ex_factory_date)} · Ship ${dmy(pi.ship_date)}</div></div>
-        <div style="min-width:170px">${bar(pi.progress_pct || 0)}<div class="muted">${pi.in_hand_qty}/${pi.ordered_qty} pcs in hand</div></div>
+async function viewDashboard(){
+  $("#view").innerHTML=`<div class="empty">Loading…</div>`;
+  const s=await api("/summary");
+  const overdue=s.soon.filter(x=>x.days<0).sort((a,b)=>a.days-b.days);
+  const week=s.soon.filter(x=>x.days>=0&&x.days<=7).sort((a,b)=>a.days-b.days);
+  const t=s.totals;
+  const row=(x,late)=>`<div class="frow">
+      <span class="item">${esc(x.item)}</span>
+      <span class="meta">${x.pi_id?"PI "+esc(x.pi_id):""}</span>
+      <span class="when" style="color:${late?"var(--late)":"var(--soon)"}">${late?`${-x.days} days late`:x.days===0?"Today":x.days===1?"Tomorrow":`in ${x.days} days`}</span>
+      <span class="desc">${dmy(x.due)}</span>
+    </div>`;
+  $("#view").innerHTML=`
+    <div class="focus late" style="${overdue.length?"":"display:none"}">
+      <div class="fhead">
+        <h2><span class="count">${overdue.length}</span> Overdue</h2>
+        <button class="btn danger" onclick="go('items');setTimeout(()=>{ITEM_FILTER='overdue';viewItems()},60)">Chase all →</button>
       </div>
+      <div class="flist">${overdue.slice(0,8).map(x=>row(x,true)).join("")}</div>
+      ${overdue.length>8?`<div class="desc" style="margin-top:10px">+ ${overdue.length-8} more overdue</div>`:""}
     </div>
-    <div class="scroll"><table>
-      <thead><tr>
-        <th>Item</th><th>Desc</th><th>Qty</th>
-        <th>V1</th><th>V2</th><th>V3</th><th>V4</th><th>Due</th><th>Status</th>
-        <th>Recd</th><th>Date</th>
-        <th>Ret1</th><th>Back1</th><th>Ret2</th><th>Back2</th><th>Ret3</th><th>Back3</th>
-        <th>In hand</th><th>Still due</th><th>Progress</th>
-        <th>GB</th><th>Lbl</th><th>Ord</th><th>✓</th><th>Pk</th><th>Sh</th>
-      </tr></thead>
-      <tbody>${skus.map((s) => rowSku(s, vopts)).join("")}</tbody>
-    </table></div>
-    <div class="muted" style="margin-top:8px">Edits save as you type. Due date = PI date + that vendor's lead time.</div>`;
-}
-function rowSku(s, vopts) {
-  const n = (f) => `<input class="num" type="number" value="${s[f] ?? 0}" onchange="saveSku(${s.id},'${f}',this.value)">`;
-  const d = (f) => `<input class="dt" type="date" value="${s[f] || ""}" onchange="saveSku(${s.id},'${f}',this.value)">`;
-  const c = (f) => `<input type="checkbox" style="width:auto" ${s[f] ? "checked" : ""} onchange="saveSku(${s.id},'${f}',this.checked?1:0)">`;
-  const v = (f) => `<select style="min-width:110px" onchange="saveSku(${s.id},'${f}',this.value||null)">${vopts(s[f])}</select>`;
-  const dues = s.vendor_due.filter(Boolean).map((x) => `${x.slot}: ${dmy(x.due)}`).join("<br>");
-  return `<tr class="${s.late ? "late" : ""}">
-    <td><b>${esc(s.item_no)}</b><div class="muted">${esc(s.buyer_no || "")}</div></td>
-    <td>${esc(s.description || "")}</td><td>${s.qty}</td>
-    <td>${v("v1_id")}</td><td>${v("v2_id")}</td><td>${v("v3_id")}</td><td>${v("v4_id")}</td>
-    <td class="muted" style="font-size:11.5px">${dues}</td>
-    <td>${statusPill(s.status, s.days_left)}</td>
-    <td>${n("received_qty")}</td><td>${d("received_date")}</td>
-    <td>${n("r1_qty")}${d("r1_date")}</td><td>${n("r1_back_qty")}${d("r1_back_date")}</td>
-    <td>${n("r2_qty")}${d("r2_date")}</td><td>${n("r2_back_qty")}${d("r2_back_date")}</td>
-    <td>${n("r3_qty")}${d("r3_date")}</td><td>${n("r3_back_qty")}${d("r3_back_date")}</td>
-    <td><b>${s.in_hand}</b></td>
-    <td style="color:${s.still_due > 0 ? "var(--red)" : "var(--green)"}"><b>${s.still_due}</b></td>
-    <td style="min-width:120px">${bar(s.progress_pct)}</td>
-    <td>${c("gift_box")}</td><td>${c("labels_needed")}</td><td>${c("labels_ordered")}</td>
-    <td>${c("complete")}</td><td>${c("packed")}</td><td>${c("shipped")}</td>
-  </tr>`;
-}
-let saveTimer = null;
-async function saveSku(id, field, value) {
-  try {
-    await api("/skus/" + id, { method: "PATCH", body: JSON.stringify({ [field]: value }) });
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => { if (OPEN_PI) viewSkus(OPEN_PI); }, 600);
-  } catch (e) { msg(e.message, "err"); }
-}
 
-// ---------- late ----------
-async function viewLate() {
-  const rows = await api("/late");
-  $("#view").innerHTML = `<h2>Late orders</h2>
-    ${rows.length ? "" : `<div class="card muted">Nothing is late. </div>`}
-    ${rows.length ? `<div class="scroll"><table>
-      <thead><tr><th>PI</th><th>Buyer</th><th>Item</th><th>Desc</th><th>Qty</th><th>Still due</th><th>Due</th><th>Status</th><th>Vendors</th><th></th></tr></thead>
-      <tbody>${rows.map((s) => `<tr class="late">
-        <td><b>${esc(s.pi ? s.pi.pi_no : "")}</b></td>
-        <td>${esc(s.pi ? s.pi.buyer_name || "" : "")}</td>
-        <td><b>${esc(s.item_no)}</b></td><td>${esc(s.description || "")}</td>
-        <td>${s.qty}</td><td><b style="color:var(--red)">${s.still_due}</b></td>
-        <td>${dmy(s.overall_due)}</td><td>${statusPill(s.status, s.days_left)}</td>
-        <td class="muted">${s.vendor_due.filter(Boolean).map((x) => esc(x.vendor) + " (" + dmy(x.due) + ")").join(", ")}</td>
-        <td><button class="tiny" onclick="openPI(${s.pi_id});go('orders')">Open PI</button></td>
-      </tr>`).join("")}</tbody></table></div>` : ""}`;
-}
-
-// ---------- masters ----------
-async function viewVendors() {
-  VENDORS = await api("/vendors");
-  $("#view").innerHTML = `<h2>Vendors</h2>
-    <div class="card" style="margin-bottom:12px">
-      <div class="grid2">
-        <div><label>Vendor name</label><input id="vn" placeholder="e.g. Sharma Woodworks"></div>
-        <div><label>Lead time (days)</label><input id="vl" type="number" placeholder="45"></div>
-        <div><label>Phone</label><input id="vp"></div>
-        <div style="display:flex;align-items:flex-end"><button class="solid" style="width:100%" onclick="addVendor()">Add vendor</button></div>
+    <div class="focus week">
+      <div class="fhead">
+        <h2><span class="count">${week.length}</span> Due this week</h2>
+        <button class="btn ghost" onclick="go('vendors')">See calendar →</button>
       </div>
-      <div class="muted" style="margin-top:8px">Lead time drives every due date: PI date + lead time.</div>
+      ${week.length?`<div class="flist">${week.map(x=>row(x,false)).join("")}</div>`
+        :`<div class="empty" style="padding:26px">Nothing due in the next 7 days.</div>`}
     </div>
-    <div class="scroll"><table><thead><tr><th>Name</th><th>Lead time (days)</th><th>Phone</th><th>Notes</th><th></th></tr></thead>
-    <tbody>${VENDORS.map((v) => `<tr>
-      <td><input value="${esc(v.name)}" onchange="saveVendor(${v.id},'name',this.value)"></td>
-      <td><input class="num" type="number" value="${v.lead_time_days || 0}" onchange="saveVendor(${v.id},'lead_time_days',this.value)"></td>
-      <td><input value="${esc(v.phone || "")}" onchange="saveVendor(${v.id},'phone',this.value)"></td>
-      <td><input value="${esc(v.notes || "")}" onchange="saveVendor(${v.id},'notes',this.value)"></td>
-      <td><button class="tiny" onclick="delVendor(${v.id})">Delete</button></td></tr>`).join("")}</tbody></table></div>`;
-}
-async function addVendor() {
-  try {
-    await api("/vendors", { method: "POST", body: JSON.stringify({ name: $("#vn").value, lead_time_days: $("#vl").value, phone: $("#vp").value }) });
-    msg("Vendor added"); viewVendors();
-  } catch (e) { msg(e.message, "err"); }
-}
-async function saveVendor(id, field, value) { await api("/vendors/" + id, { method: "PATCH", body: JSON.stringify({ [field]: value }) }); VENDORS = await api("/vendors"); msg("Saved"); }
-async function delVendor(id) { if (!confirm("Delete this vendor?")) return; await api("/vendors/" + id, { method: "DELETE" }); viewVendors(); }
 
-async function viewBuyers() {
-  BUYERS = await api("/buyers");
-  $("#view").innerHTML = `<h2>Buyers</h2>
-    <div class="card" style="margin-bottom:12px"><div class="grid2">
-      <div><label>Buyer name</label><input id="bn"></div>
-      <div><label>Contact person</label><input id="bc"></div>
-      <div><label>Email</label><input id="be"></div>
-      <div><label>Phone</label><input id="bp"></div>
-      <div style="grid-column:1/-1"><label>Address</label><input id="ba"></div>
-      <div><button class="solid" style="width:100%" onclick="addBuyer()">Add buyer</button></div>
-    </div></div>
-    <div class="scroll"><table><thead><tr><th>Name</th><th>Contact</th><th>Email</th><th>Phone</th><th>Address</th></tr></thead>
-    <tbody>${BUYERS.map((b) => `<tr>
-      <td><input value="${esc(b.name)}" onchange="saveBuyer(${b.id},'name',this.value)"></td>
-      <td><input value="${esc(b.contact || "")}" onchange="saveBuyer(${b.id},'contact',this.value)"></td>
-      <td><input value="${esc(b.email || "")}" onchange="saveBuyer(${b.id},'email',this.value)"></td>
-      <td><input value="${esc(b.phone || "")}" onchange="saveBuyer(${b.id},'phone',this.value)"></td>
-      <td><input value="${esc(b.address || "")}" onchange="saveBuyer(${b.id},'address',this.value)"></td></tr>`).join("")}</tbody></table></div>`;
-}
-async function addBuyer() {
-  try {
-    await api("/buyers", { method: "POST", body: JSON.stringify({ name: $("#bn").value, contact: $("#bc").value, email: $("#be").value, phone: $("#bp").value, address: $("#ba").value }) });
-    msg("Buyer added"); viewBuyers();
-  } catch (e) { msg(e.message, "err"); }
-}
-async function saveBuyer(id, field, value) { await api("/buyers/" + id, { method: "PATCH", body: JSON.stringify({ [field]: value }) }); msg("Saved"); }
-
-// ---------- import ----------
-function viewImport() {
-  $("#view").innerHTML = `<h2>Import from ERP</h2>
-    <div class="card">
-      <p class="muted" style="margin-top:0">Export the PI from your ERP as Excel or CSV, then choose the file here. Columns are matched automatically — you confirm before anything is saved.</p>
-      <input type="file" accept=".xlsx,.xls,.csv" onchange="preview(this.files[0])">
-      <div id="prev"></div>
+    <div class="tiles" style="margin-top:22px">
+      <div class="tile brass"><div class="edge"></div><div class="k">Pieces still due</div><div class="v">${t.due.toLocaleString("en-IN")}</div></div>
+      <div class="tile green"><div class="edge"></div><div class="k">In hand</div><div class="v">${t.in_hand.toLocaleString("en-IN")}</div></div>
+      <div class="tile"><div class="edge"></div><div class="k">Open SKUs</div><div class="v">${t.skus}</div></div>
+      <div class="tile"><div class="edge"></div><div class="k">Progress</div><div class="v">${t.pieces?Math.round(t.in_hand/t.pieces*100):0}%</div></div>
     </div>`;
 }
-async function preview(file) {
-  if (!file) return;
-  $("#prev").innerHTML = `<p class="muted">Reading ${esc(file.name)}…</p>`;
-  const fd = new FormData();
-  fd.append("file", file);
-  try {
-    const r = await fetch("/api/import/preview", { method: "POST", body: fd });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.error);
-    IMPORT = j;
-    const opts = (sel) => `<option value=""></option>` + j.headers.map((h) => `<option${h === sel ? " selected" : ""}>${esc(h)}</option>`).join("");
-    $("#prev").innerHTML = `
-      <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+
+async function viewInsights(){
+  $("#view").innerHTML=`<div class="empty">Loading…</div>`;
+  const[s,deliveries]=await Promise.all([api("/summary"),api("/deliveries")]);
+  $("#view").innerHTML=`<div class="charts">
+      <div class="card chart-card"><h3>Deliveries over time</h3><div class="chart-wrap"><canvas id="c_deliv"></canvas></div></div>
+      <div class="card chart-card"><h3>Progress per order</h3><div class="chart-wrap"><canvas id="c_pis"></canvas></div></div>
+      <div class="card chart-card"><h3>Vendor workload (pieces)</h3><div class="chart-wrap"><canvas id="c_vload"></canvas></div></div>
+      <div class="card chart-card"><h3>SKU status</h3><div class="chart-wrap"><canvas id="c_status"></canvas></div></div>
+    </div>`;
+  CHARTS.push(new Chart($("#c_deliv"),{type:"line",data:{labels:deliveries.map(d=>dmy(d.week)),
+    datasets:[{label:"Items due",data:deliveries.map(d=>d.count),borderColor:"#C08A2E",backgroundColor:"rgba(192,138,46,.15)",fill:true,tension:.3,pointRadius:3,pointBackgroundColor:"#C08A2E"}]},
+    options:{maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{beginAtZero:true,ticks:{precision:0}}}}}));
+  const pis=s.pis.slice(0,10);
+  CHARTS.push(new Chart($("#c_pis"),{type:"bar",data:{labels:pis.map(p=>"PI "+p.pi_no),
+    datasets:[{label:"In hand",data:pis.map(p=>p.in_hand),backgroundColor:"#1E8E4E",borderRadius:5},
+              {label:"Ordered",data:pis.map(p=>p.ordered),backgroundColor:"#DCD2BF",borderRadius:5}]},
+    options:{maintainAspectRatio:false,plugins:{legend:{labels:{boxWidth:12}}},scales:{x:{grid:{display:false}},y:{grid:{color:"#EAE2D3"}}}}}));
+  const vn=Object.keys(s.vload);
+  if(vn.length)CHARTS.push(new Chart($("#c_vload"),{type:"bar",data:{labels:vn,
+    datasets:[{label:"Pieces",data:vn.map(n=>s.vload[n].pieces),backgroundColor:vn.map((_,i)=>VCOLORS[i%VCOLORS.length]),borderRadius:5}]},
+    options:{indexAxis:"y",maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:"#EAE2D3"}},y:{grid:{display:false}}}}}));
+  else $("#c_vload").parentElement.innerHTML='<div class="empty">Assign vendors to see workload.</div>';
+  const sc={green:"#1E8E4E",amber:"#E89611",red:"#D7362A",overdue:"#A8231A",done:"#8A8578",none:"#D8D0BF"};
+  const labs=[["On track","green"],["Due soon","amber"],["Last 5 days","red"],["Overdue","overdue"],["Complete","done"],["Unscheduled","none"]];
+  CHARTS.push(new Chart($("#c_status"),{type:"doughnut",data:{labels:labs.map(l=>l[0]),
+    datasets:[{data:labs.map(l=>s.status[l[1]]||0),backgroundColor:labs.map(l=>sc[l[1]]),borderWidth:2,borderColor:"#FFFDF8"}]},
+    options:{plugins:{legend:{position:"right",labels:{boxWidth:12,padding:8}}},cutout:"62%",maintainAspectRatio:false}}));
+}
+
+async function viewOrders(){
+  if(OPEN_PI)return viewPIDetail(OPEN_PI);
+  $("#pactions").innerHTML=`<button class="btn" onclick="go('import')">+ Import PI</button>`;
+  $("#view").innerHTML=`<div class="empty">Loading…</div>`;
+  const pis=await api("/pis");
+  if(!pis.length){$("#view").innerHTML=`<div class="card empty">No orders yet. <a href="#" onclick="go('import');return false" style="color:var(--brass);font-weight:600">Import your first PI →</a></div>`;return;}
+  $("#view").innerHTML=`<div class="charts" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))">
+    ${pis.map(p=>{
+      const health=p.late_count?"red":p.progress_pct>=100?"done":p.progress_pct>0?"amber":"green";
+      const hc={red:"var(--red)",amber:"var(--amber)",green:"var(--green)",done:"var(--faint)"}[health];
+      return `<div class="card rail row-${health}" style="cursor:pointer" onclick="openPI(${p.id})">
+        <div style="display:flex;justify-content:space-between;align-items:start;gap:8px">
+          <div><div style="font-family:'Fraunces',serif;font-weight:600;font-size:18px;color:var(--ink)">PI ${esc(p.pi_no)}</div>
+            <div class="desc">${esc(p.buyer_name||"—")}</div></div>
+          ${p.late_count?`<span class="pill p-red">${p.late_count} late</span>`:p.progress_pct>=100?`<span class="pill p-green">Ready</span>`:""}
+        </div>
+        <div style="margin:12px 0 6px">${barEl(p.progress_pct,hc)}</div>
+        <div class="desc">${p.in_hand_qty}/${p.ordered_qty} pcs · ${p.sku_count} SKUs${p.first_due?` · first due ${dmy(p.first_due)}`:""}</div>
+      </div>`;}).join("")}
+  </div>`;
+}
+function openPI(id){OPEN_PI=id;viewPIDetail(id);}
+async function viewPIDetail(id){
+  $("#pactions").innerHTML=`<button class="btn ghost" onclick="OPEN_PI=null;go('orders')">← All orders</button>`;
+  $("#view").innerHTML=`<div class="empty">Loading…</div>`;
+  const[skus,pis]=await Promise.all([api(`/pis/${id}/skus`),api("/pis?all=1")]);
+  const pi=pis.find(p=>p.id===id)||{};
+  $("#ptitle").textContent="PI "+(pi.pi_no||"");
+  $("#psub").textContent=`${pi.buyer_name||""} · PO ${pi.po_no||"—"} · ${dmy(pi.pi_date)}`;
+  const vtag=(sk,slot)=>{const id=sk[slot];const v=VENDORS.find(x=>x.id==id);return v?`<span class="vtag" style="background:${vendorColor(id)}22;color:${vendorColor(id)}">${esc(v.name)}</span>`:"";};
+  $("#view").innerHTML=`
+    <div class="tiles">
+      <div class="tile"><div class="edge"></div><div class="k">Ordered</div><div class="v">${pi.ordered_qty}</div></div>
+      <div class="tile green"><div class="edge"></div><div class="k">In hand</div><div class="v">${pi.in_hand_qty}</div></div>
+      <div class="tile brass"><div class="edge"></div><div class="k">Still due</div><div class="v">${pi.still_due_qty}</div></div>
+      <div class="tile ${pi.late_count?"red":""}"><div class="edge"></div><div class="k">Late SKUs</div><div class="v">${pi.late_count}</div></div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Item</th><th>Description</th><th>Qty</th><th>Vendors</th><th>Due</th><th>Status</th><th>Recd</th><th>Done</th><th>In hand</th><th></th></tr></thead>
+      <tbody>${skus.map(s=>`<tr class="rail ${rowClass(s.status)}">
+        <td><span class="code">${esc(s.item_no)}</span><div class="desc">${esc(s.buyer_no||"")}</div></td>
+        <td class="desc" style="max-width:200px">${esc(s.description||"")}</td>
+        <td>${s.qty}</td>
+        <td>${["v1_id","v2_id","v3_id","v4_id"].map(v=>vtag(s,v)).filter(Boolean).join(" ")||'<span class="desc">—</span>'}</td>
+        <td>${dmy(s.overall_due)}</td>
+        <td>${statusPill(s.status,s.days_left)}</td>
+        <td><input type="number" value="${s.received_qty||0}" style="width:64px;padding:5px 7px" onchange="quickSku(${s.id},'received_qty',this.value)"></td>
+        <td style="text-align:center"><input type="checkbox" ${s.complete?"checked":""} onchange="quickSku(${s.id},'complete',this.checked?1:0)"></td>
+        <td><b>${s.in_hand}</b>${s.still_due>0?`<div class="desc">${s.still_due} due</div>`:""}</td>
+        <td><button class="btn tiny ghost" onclick="editSku(${s.id})">Details</button></td>
+      </tr>`).join("")}</tbody></table></div>
+    <div class="sub" style="margin-top:10px">Edit received qty and Done inline; tap Details for vendors, returns, gift box and labels.</div>`;
+}
+async function quickSku(id,f,v){try{await api("/skus/"+id,{method:"PATCH",body:JSON.stringify({[f]:v})});msg("Saved");if(OPEN_PI)viewPIDetail(OPEN_PI);}catch(e){msg(e.message,"err");}}
+
+async function viewItems(){
+  $("#view").innerHTML=`<div class="empty">Loading…</div>`;
+  const rows=await api("/items");
+  const filters=[["all","All"],["overdue","Overdue"],["red","Last 5 days"],["amber","Due soon"],["green","On track"],["done","Complete"]];
+  const shown=rows.filter(s=>ITEM_FILTER==="all"?true:(s.status===ITEM_FILTER));
+  const colorFor=(s)=>{
+    if(ITEM_COLOR==="status")return rowClass(s.status);
+    if(ITEM_COLOR==="vendor")return"";
+    return"";
+  };
+  const railStyle=(s)=>{
+    if(ITEM_COLOR==="vendor"){const v=s.vendors[0];return v?`style="border-left-color:${vendorColor(v.id)}"`:"";}
+    if(ITEM_COLOR==="buyer"){let h=0;for(const c of(s.buyer_name||""))h=(h*31+c.charCodeAt(0))%VCOLORS.length;return `style="border-left-color:${VCOLORS[h]}"`;}
+    return"";
+  };
+  $("#view").innerHTML=`
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px">
+      <div class="chips" style="margin:0">${filters.map(f=>`<button class="${ITEM_FILTER===f[0]?"on":""}" onclick="ITEM_FILTER='${f[0]}';viewItems()">${f[1]}</button>`).join("")}</div>
+      <div class="chips" style="margin:0"><span class="desc" style="align-self:center;margin-right:4px">Colour by:</span>
+        ${[["status","Health"],["vendor","Vendor"],["buyer","Buyer"]].map(c=>`<button class="${ITEM_COLOR===c[0]?"on":""}" onclick="ITEM_COLOR='${c[0]}';viewItems()">${c[1]}</button>`).join("")}</div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Item</th><th>Description</th><th>PI</th><th>Buyer</th><th>Qty</th><th>Vendors</th><th>Due</th><th>Status</th><th>Progress</th></tr></thead>
+      <tbody>${shown.map(s=>`<tr class="rail ${colorFor(s)}" ${railStyle(s)}>
+        <td><span class="code">${esc(s.item_no)}</span><div class="desc">${esc(s.buyer_no||"")}</div></td>
+        <td class="desc" style="max-width:220px">${esc(s.description||"")}</td>
+        <td>${esc(s.pi_no||"")}</td><td class="desc">${esc(s.buyer_name||"")}</td>
+        <td>${s.qty}</td>
+        <td>${s.vendors.map(v=>`<span class="vtag" style="background:${vendorColor(v.id)}22;color:${vendorColor(v.id)}">${esc(v.name)}</span>`).join(" ")||'<span class="desc">—</span>'}</td>
+        <td>${dmy(s.overall_due)}</td><td>${statusPill(s.status,s.days_left)}</td>
+        <td style="min-width:110px">${barEl(s.progress_pct)}</td>
+      </tr>`).join("")||`<tr><td colspan="9" class="empty">No items in this filter.</td></tr>`}</tbody></table></div>`;
+}
+
+async function viewVendors(){
+  $("#pactions").innerHTML=`<button class="btn" onclick="showVendorForm()">+ Add vendor</button> <a class="btn ghost" href="/api/export/late.csv" style="text-decoration:none">Export late list</a>`;
+  $("#view").innerHTML=`<div class="empty">Loading…</div>`;
+  const[tl,vlist]=await Promise.all([api("/vendor-timelines"),api("/vendors")]);
+  VENDORS=vlist;
+  const list=vlist.map(v=>`<tr>
+      <td><input value="${esc(v.name)}" onchange="saveVendor(${v.id},'name',this.value)" style="min-width:130px"></td>
+      <td><input type="number" value="${v.lead_time_days||0}" onchange="saveVendor(${v.id},'lead_time_days',this.value)" style="width:80px"></td>
+      <td><input value="${esc(v.phone||"")}" onchange="saveVendor(${v.id},'phone',this.value)"></td>
+      <td style="white-space:nowrap"><a class="btn tiny ghost" href="/api/export/vendor/${v.id}.csv" style="text-decoration:none">CSV</a>
+        <button class="btn tiny brass" onclick="workorder(${v.id})">Work order</button>
+        <button class="btn tiny ghost" onclick="delVendor(${v.id})">Delete</button></td></tr>`).join("");
+
+  $("#view").innerHTML=`<div id="vform"></div>
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="font-family:'Fraunces',serif;font-weight:600;font-size:15px;margin:0 0 6px">Vendors &amp; lead times</h3>
+      <div class="sub" style="margin-bottom:10px">Lead time (days) sets every due date: PI date + lead time. "Work order" opens a printable list to send the vendor.</div>
+      <div class="tablewrap" style="border:none"><table><thead><tr><th>Vendor</th><th>Lead time</th><th>Phone</th><th>Actions</th></tr></thead><tbody>${list||`<tr><td colspan="4" class="empty">No vendors yet.</td></tr>`}</tbody></table></div>
+    </div>
+    <h3 style="font-family:'Fraunces',serif;font-weight:600;font-size:16px;margin:4px 0 12px;color:var(--brass)">Delivery calendar</h3>
+    <div id="calendar"></div>`;
+  renderCalendar(tl);
+}
+function renderCalendar(tl){
+  // gather all items across vendors, grouped by week
+  const items=[];
+  tl.forEach(v=>v.items.forEach(it=>{if(it.due&&!it.complete)items.push({...it,vid:v.id,vname:v.name});}));
+  if(!items.length){$("#calendar").innerHTML=`<div class="card empty">No scheduled items yet. Assign vendors with lead times to fill the calendar.</div>`;return;}
+  const today=new Date();today.setHours(0,0,0,0);
+  const mon=(d)=>{const x=new Date(d);x.setHours(0,0,0,0);x.setDate(x.getDate()-((x.getDay()+6)%7));return x;};
+  const thisMon=mon(today);
+  const weekName=(w)=>{const diff=Math.round((w-thisMon)/6048e5);return diff===0?"This week":diff===1?"Next week":diff<0?`${-diff} week${-diff>1?"s":""} ago`:`In ${diff} weeks`;};
+  const byWeek={};
+  items.forEach(it=>{const w=mon(new Date(it.due+"T00:00:00")).getTime();(byWeek[w]=byWeek[w]||[]).push(it);});
+  const weeks=Object.keys(byWeek).map(Number).sort();
+  const dnames=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  $("#calendar").innerHTML=weeks.map(wk=>{
+    const wd=new Date(wk);
+    const cells=[];
+    for(let i=0;i<7;i++){
+      const day=new Date(wk+i*864e5);const iso=day.toISOString().slice(0,10);
+      const its=byWeek[wk].filter(x=>x.due===iso);
+      const isToday=day.getTime()===today.getTime();
+      cells.push(`<div class="calcell ${isToday?"today":""}"><div class="d">${dnames[i]} ${day.getDate()}/${day.getMonth()+1}</div>
+        ${its.map(x=>`<div class="calitem ci-${x.status==="overdue"?"red":x.status==="red"?"red":x.status==="amber"?"amber":"green"}" title="${esc(x.vname)} · PI ${esc(x.pi||"")}">${esc(x.item)} · PI${esc(x.pi||"")}</div>`).join("")}
+      </div>`);
+    }
+    return `<div class="weekgroup"><h4>${weekName(wd)}</h4><div class="calgrid">${cells.join("")}</div></div>`;
+  }).join("");
+}
+async function workorder(id){
+  const w=await api(`/vendor/${id}/workorder`);
+  const win=window.open("","_blank");
+  win.document.write(`<html><head><title>Work Order — ${esc(w.vendor)}</title>
+    <style>body{font-family:Georgia,serif;color:#222;padding:32px;max-width:800px;margin:auto}h1{font-size:22px;margin:0}
+    .meta{color:#666;font-size:13px;margin:4px 0 20px}table{width:100%;border-collapse:collapse;font-size:13px}
+    th{text-align:left;border-bottom:2px solid #333;padding:8px}td{border-bottom:1px solid #ddd;padding:8px}
+    .late{color:#b0472f;font-weight:bold}@media print{button{display:none}}</style></head><body>
+    <h1>Work Order · ${esc(w.vendor)}</h1>
+    <div class="meta">Grey Door Studio · Generated ${dmy(w.generated)}${w.lead_time?` · ${w.lead_time}-day lead time`:""}${w.phone?` · ${esc(w.phone)}`:""}</div>
+    <table><thead><tr><th>Item</th><th>Buyer No</th><th>Description</th><th>PI</th><th>Qty</th><th>Due</th></tr></thead><tbody>
+    ${w.items.map(it=>`<tr><td><b>${esc(it.item)}</b></td><td>${esc(it.buyer_no||"")}</td><td>${esc(it.desc||"")}</td><td>${esc(it.pi||"")}</td><td>${it.qty}</td><td class="${it.status==="overdue"?"late":""}">${dmy(it.due)}</td></tr>`).join("")}
+    </tbody></table>
+    <p style="margin-top:24px"><button onclick="window.print()">Print / Save as PDF</button></p></body></html>`);
+  win.document.close();
+}
+function showVendorForm(){
+  $("#vform").innerHTML=`<div class="card" style="margin-bottom:16px"><div class="grid2">
+    <div><label>Vendor name</label><input id="vn" placeholder="e.g. Sharma Woodworks"></div>
+    <div><label>Lead time (days)</label><input id="vl" type="number" placeholder="45"></div>
+    <div><label>Phone</label><input id="vp"></div>
+    <div style="display:flex;align-items:flex-end;gap:8px"><button class="btn" onclick="addVendor()">Add</button><button class="btn ghost" onclick="$('#vform').innerHTML=''">Cancel</button></div>
+  </div></div>`;
+}
+async function addVendor(){try{await api("/vendors",{method:"POST",body:JSON.stringify({name:$("#vn").value,lead_time_days:$("#vl").value,phone:$("#vp").value})});msg("Vendor added");VENDORS=await api("/vendors");viewVendors();}catch(e){msg(e.message,"err");}}
+async function saveVendor(id,f,v){await api("/vendors/"+id,{method:"PATCH",body:JSON.stringify({[f]:v})});VENDORS=await api("/vendors");msg("Saved");}
+async function delVendor(id){if(!confirm("Delete this vendor?"))return;await api("/vendors/"+id,{method:"DELETE"});viewVendors();}
+
+async function viewBuyers(){
+  $("#pactions").innerHTML=`<button class="btn" onclick="showBuyerForm()">+ Add buyer</button>`;
+  BUYERS=await api("/buyers");
+  $("#view").innerHTML=`<div id="bform"></div>
+    <div class="tablewrap"><table><thead><tr><th>Name</th><th>Contact</th><th>Email</th><th>Phone</th><th>Address</th></tr></thead>
+    <tbody>${BUYERS.map(b=>`<tr>
+      <td><input value="${esc(b.name)}" onchange="saveBuyer(${b.id},'name',this.value)" style="min-width:150px"></td>
+      <td><input value="${esc(b.contact||"")}" onchange="saveBuyer(${b.id},'contact',this.value)"></td>
+      <td><input value="${esc(b.email||"")}" onchange="saveBuyer(${b.id},'email',this.value)"></td>
+      <td><input value="${esc(b.phone||"")}" onchange="saveBuyer(${b.id},'phone',this.value)"></td>
+      <td><input value="${esc(b.address||"")}" onchange="saveBuyer(${b.id},'address',this.value)" style="min-width:200px"></td>
+    </tr>`).join("")||`<tr><td colspan="5" class="empty">No buyers yet.</td></tr>`}</tbody></table></div>`;
+}
+function showBuyerForm(){
+  $("#bform").innerHTML=`<div class="card" style="margin-bottom:16px"><div class="grid2">
+    <div><label>Buyer name</label><input id="bn"></div>
+    <div><label>Contact person</label><input id="bc"></div>
+    <div><label>Email</label><input id="be"></div>
+    <div><label>Phone</label><input id="bp"></div>
+    <div style="grid-column:1/-1"><label>Address</label><input id="ba"></div>
+    <div style="display:flex;align-items:flex-end;gap:8px"><button class="btn" onclick="addBuyer()">Add</button><button class="btn ghost" onclick="$('#bform').innerHTML=''">Cancel</button></div>
+  </div></div>`;
+}
+async function addBuyer(){try{await api("/buyers",{method:"POST",body:JSON.stringify({name:$("#bn").value,contact:$("#bc").value,email:$("#be").value,phone:$("#bp").value,address:$("#ba").value})});msg("Buyer added");viewBuyers();}catch(e){msg(e.message,"err");}}
+async function saveBuyer(id,f,v){await api("/buyers/"+id,{method:"PATCH",body:JSON.stringify({[f]:v})});msg("Saved");}
+
+async function editSku(id){
+  const skus=await api(`/pis/${OPEN_PI}/skus`);const s=skus.find(x=>x.id===id);if(!s)return;
+  const vopt=(sel)=>`<option value="">—</option>`+VENDORS.map(v=>`<option value="${v.id}"${sel==v.id?" selected":""}>${esc(v.name)}${v.lead_time_days?` (${v.lead_time_days}d)`:""}</option>`).join("");
+  const wrap=document.createElement("div");
+  wrap.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:60;display:grid;place-items:center;padding:16px";
+  wrap.innerHTML=`<div class="card" style="max-width:560px;width:100%;max-height:88vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3 style="font-family:'Fraunces',serif;font-weight:600;font-size:18px;margin:0;color:var(--brass)">${esc(s.item_no)}</h3>
+      <button class="btn ghost tiny" id="xclose">Close</button></div>
+    <div class="desc" style="margin-bottom:14px">${esc(s.description||"")} · ordered ${s.qty}</div>
+    <label>Vendors (parts of this item)</label>
+    <div class="grid2" style="margin-bottom:12px">${["v1_id","v2_id","v3_id","v4_id"].map(v=>`<select data-f="${v}">${vopt(s[v])}</select>`).join("")}</div>
+    <div class="grid2">
+      <div><label>Received qty</label><input type="number" data-f="received_qty" value="${s.received_qty||0}"></div>
+      <div><label>Received date</label><input type="date" data-f="received_date" value="${s.received_date||""}"></div>
+    </div>
+    <div style="margin:12px 0 6px;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em;text-transform:uppercase">Repair returns</div>
+    ${[1,2,3].map(n=>`<div class="grid2" style="margin-bottom:8px">
+      <div><label>Return ${n} — sent</label><input type="number" data-f="r${n}_qty" value="${s["r"+n+"_qty"]||0}"></div>
+      <div><label>Return ${n} — back</label><input type="number" data-f="r${n}_back_qty" value="${s["r"+n+"_back_qty"]||0}"></div>
+    </div>`).join("")}
+    <div class="grid2" style="margin-top:8px">
+      <label style="display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink)"><input type="checkbox" data-f="gift_box" ${s.gift_box?"checked":""}> Gift box</label>
+      <label style="display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink)"><input type="checkbox" data-f="labels_needed" ${s.labels_needed?"checked":""}> Labels needed</label>
+      <label style="display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink)"><input type="checkbox" data-f="labels_ordered" ${s.labels_ordered?"checked":""}> Labels ordered</label>
+      <label style="display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink)"><input type="checkbox" data-f="complete" ${s.complete?"checked":""}> Complete</label>
+    </div>
+    <button class="btn" style="width:100%;margin-top:16px" id="xsave">Save changes</button>
+  </div>`;
+  document.body.appendChild(wrap);
+  wrap.querySelector("#xclose").onclick=()=>wrap.remove();
+  wrap.onclick=(e)=>{if(e.target===wrap)wrap.remove();};
+  wrap.querySelector("#xsave").onclick=async()=>{
+    const body={};
+    wrap.querySelectorAll("[data-f]").forEach(el=>{const f=el.dataset.f;body[f]=el.type==="checkbox"?(el.checked?1:0):(el.value===""?null:el.value);});
+    try{await api("/skus/"+id,{method:"PATCH",body:JSON.stringify(body)});wrap.remove();msg("Saved");viewPIDetail(OPEN_PI);}catch(e){msg(e.message,"err");}
+  };
+}
+
+function viewImport(){
+  $("#view").innerHTML=`<div class="card" style="max-width:640px">
+    <h3 style="font-family:'Fraunces',serif;font-weight:600;font-size:16px;margin:0 0 6px;color:var(--brass)">Import a proforma invoice</h3>
+    <p class="sub" style="margin:0 0 14px">Export the PI from your ERP as Excel or CSV, then choose the file. The details and every SKU are read automatically — you review before saving.</p>
+    <input type="file" accept=".xlsx,.xls,.csv" onchange="preview(this.files[0])">
+    <div id="prev"></div>
+  </div>`;
+}
+async function preview(file){
+  if(!file)return;$("#prev").innerHTML=`<p class="sub" style="margin-top:14px">Reading ${esc(file.name)}…</p>`;
+  const fd=new FormData();fd.append("file",file);
+  try{
+    const r=await fetch("/api/import/preview",{method:"POST",body:fd});const j=await r.json();
+    if(!r.ok)throw new Error(j.error);IMPORT=j;
+    const head=`<hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
       <div class="grid2">
         <div><label>PI number *</label><input id="i_pi" value="${esc(j.detected.pi_no)}"></div>
         <div><label>PO number</label><input id="i_po" value="${esc(j.detected.po_no)}"></div>
-        <div><label>Buyer</label><input id="i_buyer" list="blist" value="${esc(j.detected.buyer)}">
-          <datalist id="blist">${BUYERS.map((b) => `<option>${esc(b.name)}</option>`).join("")}</datalist></div>
-        <div><label>PI date</label><input id="i_date" type="date" value="${j.detected.pi_date || ""}"></div>
-        <div><label>Ex-factory date</label><input id="i_exf" type="date" value="${j.detected.ex_factory_date || ""}"></div>
-        <div><label>Ship date</label><input id="i_ship" type="date" value="${j.detected.ship_date || ""}"></div>
-      </div>
-      <h2 style="margin:16px 0 8px;font-size:15px">Column mapping · ${j.rowCount} rows found</h2>
+        <div><label>Buyer</label><input id="i_buyer" list="blist" value="${esc(j.detected.buyer)}"><datalist id="blist">${BUYERS.map(b=>`<option>${esc(b.name)}</option>`).join("")}</datalist></div>
+        <div><label>PI date</label><input id="i_date" type="date" value="${j.detected.pi_date||""}"></div>
+        <div><label>Ex-factory date</label><input id="i_exf" type="date" value="${j.detected.ex_factory_date||""}"></div>
+        <div><label>Ship date</label><input id="i_ship" type="date" value="${j.detected.ship_date||""}"></div>
+      </div>`;
+    if(j.mode==="invoice"){
+      const tq=j.skus.reduce((t,s)=>t+(+s.qty||0),0);
+      $("#prev").innerHTML=head+`
+        <div class="msg ok" style="margin-top:14px">✓ Read automatically — ${j.rowCount} SKUs · ${tq.toLocaleString("en-IN")} pcs.</div>
+        <div class="tablewrap" style="max-height:280px"><table><thead><tr><th>Item</th><th>Buyer No</th><th>Description</th><th>Qty</th></tr></thead>
+        <tbody>${j.skus.map(s=>`<tr><td class="code">${esc(s.item_no)}</td><td>${esc(s.buyer_no)}</td><td class="desc">${esc(s.description)}</td><td>${esc(s.qty)}</td></tr>`).join("")}</tbody></table></div>
+        <button class="btn" style="margin-top:14px" id="cbtn" onclick="commit()">Import this PI</button>`;
+      return;
+    }
+    const opts=(sel)=>`<option value=""></option>`+j.headers.map(h=>`<option${h===sel?" selected":""}>${esc(h)}</option>`).join("");
+    $("#prev").innerHTML=head+`
+      <h3 style="font-family:'Fraunces',serif;font-size:14px;margin:16px 0 8px">Match columns · ${j.rowCount} rows</h3>
       <div class="grid2">
         <div><label>Item No *</label><select id="m_item">${opts(j.mapping.item_no)}</select></div>
         <div><label>Buyer No</label><select id="m_buyerno">${opts(j.mapping.buyer_no)}</select></div>
         <div><label>Description</label><select id="m_desc">${opts(j.mapping.description)}</select></div>
         <div><label>Quantity *</label><select id="m_qty">${opts(j.mapping.qty)}</select></div>
       </div>
-      <div class="scroll" style="max-height:220px;margin-top:12px"><table>
-        <thead><tr>${j.headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
-        <tbody>${j.sample.map((r) => `<tr>${j.headers.map((h) => `<td>${esc(r[h])}</td>`).join("")}</tr>`).join("")}</tbody>
-      </table></div>
-      <button class="solid" style="margin-top:12px" id="cbtn" onclick="commit()">Import this PI</button>`;
-  } catch (e) { $("#prev").innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
+      <button class="btn" style="margin-top:14px" id="cbtn" onclick="commit()">Import this PI</button>`;
+  }catch(e){$("#prev").innerHTML=`<div class="msg err" style="margin-top:14px">${esc(e.message)}</div>`;}
 }
-async function commit(allowDuplicate) {
-  const btn = $("#cbtn"); if (btn) { btn.disabled = true; btn.textContent = "Importing…"; }
-  try {
-    const body = {
-      importId: IMPORT.importId, allowDuplicate: !!allowDuplicate,
-      pi: { pi_no: $("#i_pi").value, po_no: $("#i_po").value, buyer: $("#i_buyer").value,
-            pi_date: $("#i_date").value, ex_factory_date: $("#i_exf").value, ship_date: $("#i_ship").value },
-      mapping: { item_no: $("#m_item").value, buyer_no: $("#m_buyerno").value, description: $("#m_desc").value, qty: $("#m_qty").value },
-    };
-    const r = await fetch("/api/import/commit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const j = await r.json();
-    if (r.status === 409) {
-      if (confirm(j.error + ". Import it again anyway?")) return commit(true);
-      throw new Error("Import cancelled");
-    }
-    if (!r.ok) throw new Error(j.error);
-    BUYERS = await api("/buyers");
-    msg(`Imported ${j.count} SKUs${j.carried ? ` · ${j.carried} reused earlier vendor settings` : ""}`);
-    OPEN_PI = j.piId; go("orders");
-  } catch (e) { msg(e.message, "err"); }
-  finally { if (btn) { btn.disabled = false; btn.textContent = "Import this PI"; } }
+async function commit(allowDuplicate){
+  const btn=$("#cbtn");if(btn){btn.disabled=true;btn.textContent="Importing…";}
+  try{
+    const body={importId:IMPORT.importId,allowDuplicate:!!allowDuplicate,
+      pi:{pi_no:$("#i_pi").value,po_no:$("#i_po").value,buyer:$("#i_buyer").value,
+          buyer_address:(IMPORT.detected&&IMPORT.detected.buyer_address)||"",
+          pi_date:$("#i_date").value,ex_factory_date:$("#i_exf").value,ship_date:$("#i_ship").value}};
+    if(IMPORT.mode==="table")body.mapping={item_no:$("#m_item").value,buyer_no:$("#m_buyerno").value,description:$("#m_desc").value,qty:$("#m_qty").value};
+    const r=await fetch("/api/import/commit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const j=await r.json();
+    if(r.status===409){if(confirm(j.error+". Import again anyway?"))return commit(true);throw new Error("Import cancelled");}
+    if(!r.ok)throw new Error(j.error);
+    BUYERS=await api("/buyers");msg(`Imported ${j.count} SKUs${j.carried?` · ${j.carried} reused earlier settings`:""}`);
+    OPEN_PI=j.piId;go("orders");
+  }catch(e){msg(e.message,"err");}
+  finally{if(btn){btn.disabled=false;btn.textContent="Import this PI";}}
 }
 
 boot();
