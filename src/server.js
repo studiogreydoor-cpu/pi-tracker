@@ -336,7 +336,16 @@ api.post("/import/preview", upload.single("file"), async (req, res) => {
       const p = await parseInvoicePdf(req.file.buffer);
       if (!p.skus || !p.skus.length) {
         // Show what the extractor actually produced, so the layout can be diagnosed.
-        const sample = String(p._text || "").split(/\r?\n/).filter((l) => l.trim()).slice(0, 60).join("\n");
+        // Show the header AND any rows that look like line items, so the layout can be diagnosed.
+        const allLines = String(p._text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        const itemish = allLines.filter((l) => /\d{3,}/.test(l) && /[A-Za-z]/.test(l) && !/^(proforma|buyer|payment|delivery|port|our banker|forwarder|manufacturer|ship date|ex-factory|account|swift|ifsc)/i.test(l));
+        const sample = [
+          "----- first 25 lines -----",
+          ...allLines.slice(0, 25),
+          "",
+          "----- rows that look like line items (" + itemish.length + ") -----",
+          ...itemish.slice(0, 30),
+        ].join("\n");
         return res.status(400).json({
           error: sample
             ? "Couldn't find line items in this PDF's layout. The text it contains is shown below — send it to me and I'll add support for this format."

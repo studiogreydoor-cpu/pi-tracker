@@ -26,6 +26,17 @@ function labelValue(text, label) {
 
 function firstToken(v) { return String(v || "").trim().split(/\s{2,}|\s+/)[0] || ""; }
 
+// pdf-parse concatenates adjacent table cells with no space ("18490Patio bowl mustard100Pc").
+// Re-insert spaces at digit<->letter boundaries. Applied only to candidate item rows so that
+// standalone codes like KKX0005 elsewhere are left untouched.
+function unglue(line) {
+  return line
+    .replace(/(\d)([A-Za-z])/g, "$1 $2")
+    .replace(/([a-z])(\d)/g, "$1 $2")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function parseInvoiceText(text) {
   const lines = text.split(/\r?\n/);
 
@@ -123,7 +134,10 @@ function parseInvoiceText(text) {
   for (let li = 0; li < lines.length; li++) {
     let line = lines[li].replace(/\t/g, " ").trim();
     if (!line || skipLine(line)) continue;
-    if (!/^\d[\w\-/]*\s/.test(line)) continue;      // must start with an item code
+    // A row that starts with an item code — glued or spaced.
+    if (!/^\d{3,}/.test(line)) continue;
+    if (!/(pcs?|nos?)\b/i.test(line) && !/^\d[\w\-/]*\s/.test(line)) continue;
+    line = unglue(line);
 
     // strip a trailing unit, with or without a space before it ("300 Pc" or "100Pc")
     line = line.replace(/\s*(pcs?|nos?)\.?\s*$/i, "");
@@ -179,9 +193,10 @@ function parseInvoiceText(text) {
   // Fallback: some extractors return the page as one long run with few line breaks.
   // Scan the whole text for "<item code> <description> <qty>Pc" style matches.
   if (!skus.length) {
+    const scanText = text.split(/\r?\n/).map((l) => (/(pcs?|nos?)\b/i.test(l) ? unglue(l) : l)).join("\n");
     const re = /(\b\d{4,7})\s+([A-Za-z][^\n]{1,70}?)\s+(\d{1,6})\s*(?:pcs?|nos?)\b/gi;
     let m;
-    while ((m = re.exec(text)) !== null) {
+    while ((m = re.exec(scanText)) !== null) {
       const itemNo = m[1];
       let desc = m[2].replace(/\s{2,}/g, " ").trim();
       const qty = parseInt(m[3], 10);
