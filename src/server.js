@@ -6,6 +6,7 @@ const cookieParser = require("cookie-parser");
 const multer = require("multer");
 const XLSX = require("xlsx");
 const { parseInvoiceXlsx } = require("./invoiceParser");
+const { parseInvoicePdf } = require("./pdfParser");
 const D = require("./db");
 const db = D.db;
 
@@ -325,8 +326,25 @@ function guess(headers, candidates) {
   return "";
 }
 
-api.post("/import/preview", upload.single("file"), (req, res) => {
+api.post("/import/preview", upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file received" });
+  const isPdf = /\.pdf$/i.test(req.file.originalname || "") || req.file.mimetype === "application/pdf";
+
+  // 0) PDF proforma invoice
+  if (isPdf) {
+    try {
+      const p = await parseInvoicePdf(req.file.buffer);
+      if (!p.skus || !p.skus.length) return res.status(400).json({ error: "Couldn't find line items in that PDF. If it's a scan, please use the Excel export." });
+      const importId = crypto.randomUUID();
+      pending.set(importId, { mode: "invoice", skus: p.skus });
+      setTimeout(() => pending.delete(importId), 30 * 60 * 1000);
+      return res.json({
+        importId, mode: "invoice", source: "pdf", rowCount: p.skus.length, skus: p.skus,
+        detected: { pi_no: p.pi || "", po_no: p.po || "", buyer: p.buyer || "", buyer_address: p.buyer_address || "",
+          pi_date: p.pi_date || null, ex_factory_date: p.ex_factory_date || null, ship_date: p.ship_date || null },
+      });
+    } catch (e) { return res.status(400).json({ error: e.message || "Could not read that PDF" }); }
+  }
 
   // 1) Try the invoice-layout reader (handles the ERP's printed-invoice export).
   let inv = null;

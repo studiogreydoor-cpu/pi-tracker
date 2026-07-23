@@ -120,6 +120,14 @@
   .calcell.today{border-color:var(--brass);border-width:2px}
   .calitem{font-size:11px;padding:3px 7px;border-radius:5px;margin-bottom:4px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ci-red{background:var(--late);color:#fff} .ci-amber{background:var(--soon-bg);color:#9A6205;border:1px solid var(--soon-line)} .ci-green{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-line)}
+  table.grid td{padding:6px 8px}
+  table.grid th{padding:8px}
+  .mini{padding:5px 7px;font-size:12px;border-radius:6px;min-width:96px}
+  .mini.num{width:62px;min-width:0;text-align:right}
+  .ctr{text-align:center}
+  .cell-copy{display:flex;align-items:center;gap:3px}
+  .copydown{border:1px solid var(--line);background:var(--card2);color:var(--muted);border-radius:5px;width:20px;height:22px;line-height:1;font-size:12px;cursor:pointer;padding:0;flex:none;font-family:inherit}
+  .copydown:hover{background:var(--brass);color:#231A05;border-color:var(--brass)}
   #login{min-height:100vh;display:grid;place-items:center;width:100%}
   #login .box{width:350px;max-width:90vw}
   .menu-btn{display:none}
@@ -356,9 +364,18 @@ async function viewPIDetail(id){
   $("#view").innerHTML=`<div class="empty">Loading…</div>`;
   const[skus,pis]=await Promise.all([api(`/pis/${id}/skus`),api("/pis?all=1")]);
   const pi=pis.find(p=>p.id===id)||{};
+  SKUS_CACHE=skus;
   $("#ptitle").textContent="PI "+(pi.pi_no||"");
   $("#psub").textContent=`${pi.buyer_name||""} · PO ${pi.po_no||"—"} · ${dmy(pi.pi_date)}`;
-  const vtag=(sk,slot)=>{const id=sk[slot];const v=VENDORS.find(x=>x.id==id);return v?`<span class="vtag" style="background:${vendorColor(id)}22;color:${vendorColor(id)}">${esc(v.name)}</span>`:"";};
+
+  const vsel=(s,slot,i)=>`<div class="cell-copy">
+      <select class="mini" onchange="setSku(${s.id},'${slot}',this.value||null)">
+        <option value="">—</option>
+        ${VENDORS.map(v=>`<option value="${v.id}"${s[slot]==v.id?" selected":""}>${esc(v.name)}${v.lead_time_days?` · ${v.lead_time_days}d`:""}</option>`).join("")}
+      </select>
+      <button class="copydown" title="Copy to all rows below" onclick="copyDown(${i},'${slot}')">↓</button>
+    </div>`;
+
   $("#view").innerHTML=`
     <div class="tiles">
       <div class="tile"><div class="edge"></div><div class="k">Ordered</div><div class="v">${pi.ordered_qty}</div></div>
@@ -366,23 +383,60 @@ async function viewPIDetail(id){
       <div class="tile brass"><div class="edge"></div><div class="k">Still due</div><div class="v">${pi.still_due_qty}</div></div>
       <div class="tile ${pi.late_count?"red":""}"><div class="edge"></div><div class="k">Late SKUs</div><div class="v">${pi.late_count}</div></div>
     </div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Item</th><th>Description</th><th>Qty</th><th>Vendors</th><th>Due</th><th>Status</th><th>Recd</th><th>Done</th><th>In hand</th><th></th></tr></thead>
-      <tbody>${skus.map(s=>`<tr class="rail ${rowClass(s.status)}">
+    <div class="sub" style="margin-bottom:10px">Everything is editable right here. The <b>↓</b> button copies that value to every row below it.</div>
+    <div class="tablewrap"><table class="grid">
+      <thead><tr>
+        <th>Item</th><th>Description</th><th>Qty</th>
+        <th>Vendor 1</th><th>Vendor 2</th><th>Vendor 3</th><th>Vendor 4</th>
+        <th>Due</th><th>Status</th>
+        <th>Recd</th><th>In hand</th><th>Still due</th>
+        <th title="Gift box">Gift</th><th title="Labels needed">Lbl</th><th title="Labels ordered">Ord</th><th>Done</th><th></th>
+      </tr></thead>
+      <tbody>${skus.map((s,i)=>`<tr class="rail ${rowClass(s.status)}">
         <td><span class="code">${esc(s.item_no)}</span><div class="desc">${esc(s.buyer_no||"")}</div></td>
-        <td class="desc" style="max-width:200px">${esc(s.description||"")}</td>
+        <td class="desc" style="max-width:180px">${esc(s.description||"")}</td>
         <td>${s.qty}</td>
-        <td>${["v1_id","v2_id","v3_id","v4_id"].map(v=>vtag(s,v)).filter(Boolean).join(" ")||'<span class="desc">—</span>'}</td>
-        <td>${dmy(s.overall_due)}</td>
+        <td>${vsel(s,"v1_id",i)}</td><td>${vsel(s,"v2_id",i)}</td><td>${vsel(s,"v3_id",i)}</td><td>${vsel(s,"v4_id",i)}</td>
+        <td style="white-space:nowrap">${dmy(s.overall_due)}</td>
         <td>${statusPill(s.status,s.days_left)}</td>
-        <td><input type="number" value="${s.received_qty||0}" style="width:64px;padding:5px 7px" onchange="quickSku(${s.id},'received_qty',this.value)"></td>
-        <td style="text-align:center"><input type="checkbox" ${s.complete?"checked":""} onchange="quickSku(${s.id},'complete',this.checked?1:0)"></td>
-        <td><b>${s.in_hand}</b>${s.still_due>0?`<div class="desc">${s.still_due} due</div>`:""}</td>
-        <td><button class="btn tiny ghost" onclick="editSku(${s.id})">Details</button></td>
-      </tr>`).join("")}</tbody></table></div>
-    <div class="sub" style="margin-top:10px">Edit received qty and Done inline; tap Details for vendors, returns, gift box and labels.</div>`;
+        <td><input class="mini num" type="number" value="${s.received_qty||0}" onchange="setSku(${s.id},'received_qty',this.value)"></td>
+        <td><b>${s.in_hand}</b></td>
+        <td style="color:${s.still_due>0?"var(--late)":"var(--ok)"};font-weight:700">${s.still_due}</td>
+        <td class="ctr"><div class="cell-copy"><input type="checkbox" ${s.gift_box?"checked":""} onchange="setSku(${s.id},'gift_box',this.checked?1:0)"><button class="copydown" onclick="copyDown(${i},'gift_box')">↓</button></div></td>
+        <td class="ctr"><div class="cell-copy"><input type="checkbox" ${s.labels_needed?"checked":""} onchange="setSku(${s.id},'labels_needed',this.checked?1:0)"><button class="copydown" onclick="copyDown(${i},'labels_needed')">↓</button></div></td>
+        <td class="ctr"><input type="checkbox" ${s.labels_ordered?"checked":""} onchange="setSku(${s.id},'labels_ordered',this.checked?1:0)"></td>
+        <td class="ctr"><input type="checkbox" ${s.complete?"checked":""} onchange="setSku(${s.id},'complete',this.checked?1:0)"></td>
+        <td><button class="btn tiny ghost" onclick="editSku(${s.id})">More</button></td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+    <div class="sub" style="margin-top:10px">"More" opens repair returns and dates for that SKU.</div>`;
 }
-async function quickSku(id,f,v){try{await api("/skus/"+id,{method:"PATCH",body:JSON.stringify({[f]:v})});msg("Saved");if(OPEN_PI)viewPIDetail(OPEN_PI);}catch(e){msg(e.message,"err");}}
+
+let SKUS_CACHE=[];
+// Save one field, then refresh just what changed (keeps the page snappy).
+let saveQueue=Promise.resolve();
+function setSku(id,field,value){
+  saveQueue=saveQueue.then(async()=>{
+    try{await api("/skus/"+id,{method:"PATCH",body:JSON.stringify({[field]:value})});}
+    catch(e){msg(e.message,"err");}
+  });
+  clearTimeout(window._refreshT);
+  window._refreshT=setTimeout(()=>{if(OPEN_PI)viewPIDetail(OPEN_PI);},900);
+  return saveQueue;
+}
+// Excel-style fill down: copy this row's value to every row below.
+async function copyDown(fromIndex,field){
+  const src=SKUS_CACHE[fromIndex];if(!src)return;
+  const value=src[field];
+  const targets=SKUS_CACHE.slice(fromIndex+1);
+  if(!targets.length){msg("No rows below to copy into");return;}
+  msg(`Copying to ${targets.length} row${targets.length>1?"s":""}…`);
+  for(const t of targets){
+    try{await api("/skus/"+t.id,{method:"PATCH",body:JSON.stringify({[field]:value})});}catch(e){}
+  }
+  msg(`Copied down to ${targets.length} rows`);
+  if(OPEN_PI)viewPIDetail(OPEN_PI);
+}
 
 async function viewItems(){
   $("#view").innerHTML=`<div class="empty">Loading…</div>`;
@@ -564,8 +618,8 @@ async function editSku(id){
 function viewImport(){
   $("#view").innerHTML=`<div class="card" style="max-width:640px">
     <h3 style="font-family:'Fraunces',serif;font-weight:600;font-size:16px;margin:0 0 6px;color:var(--brass)">Import a proforma invoice</h3>
-    <p class="sub" style="margin:0 0 14px">Export the PI from your ERP as Excel or CSV, then choose the file. The details and every SKU are read automatically — you review before saving.</p>
-    <input type="file" accept=".xlsx,.xls,.csv" onchange="preview(this.files[0])">
+    <p class="sub" style="margin:0 0 14px">Choose your PI as a <b>PDF</b> or an <b>Excel/CSV</b> export — either works. The details and every SKU are read automatically, and you review before anything is saved.</p>
+    <input type="file" accept=".xlsx,.xls,.csv,.pdf" onchange="preview(this.files[0])">
     <div id="prev"></div>
   </div>`;
 }
@@ -587,7 +641,7 @@ async function preview(file){
     if(j.mode==="invoice"){
       const tq=j.skus.reduce((t,s)=>t+(+s.qty||0),0);
       $("#prev").innerHTML=head+`
-        <div class="msg ok" style="margin-top:14px">✓ Read automatically — ${j.rowCount} SKUs · ${tq.toLocaleString("en-IN")} pcs.</div>
+        <div class="msg ok" style="margin-top:14px">✓ Read ${j.source==="pdf"?"your PDF":"the file"} automatically — ${j.rowCount} SKUs · ${tq.toLocaleString("en-IN")} pcs.</div>
         <div class="tablewrap" style="max-height:280px"><table><thead><tr><th>Item</th><th>Buyer No</th><th>Description</th><th>Qty</th></tr></thead>
         <tbody>${j.skus.map(s=>`<tr><td class="code">${esc(s.item_no)}</td><td>${esc(s.buyer_no)}</td><td class="desc">${esc(s.description)}</td><td>${esc(s.qty)}</td></tr>`).join("")}</tbody></table></div>
         <button class="btn" style="margin-top:14px" id="cbtn" onclick="commit()">Import this PI</button>`;
