@@ -336,16 +336,19 @@ api.post("/import/preview", upload.single("file"), async (req, res) => {
       const p = await parseInvoicePdf(req.file.buffer);
       if (!p.skus || !p.skus.length) {
         // Show what the extractor actually produced, so the layout can be diagnosed.
-        // Show the header AND any rows that look like line items, so the layout can be diagnosed.
+        // Most diagnostic value first: method, then the rows that look like line items.
         const allLines = String(p._text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-        const itemish = allLines.filter((l) => /\d{3,}/.test(l) && /[A-Za-z]/.test(l) && !/^(proforma|buyer|payment|delivery|port|our banker|forwarder|manufacturer|ship date|ex-factory|account|swift|ifsc)/i.test(l));
+        const itemish = allLines.filter((l) => /\d{3,}/.test(l) && /[A-Za-z]/.test(l) && !/^(proforma|buyer|payment|delivery|port|our banker|forwarder|manufacturer|ship date|ex-factory|account|swift|ifsc|item no|us \$)/i.test(l));
         const sample = [
-          "----- extraction method: " + (p._method || "unknown") + " -----",
-          "----- first 25 lines -----",
-          ...allLines.slice(0, 25),
+          "BUILD CHECK: v3-positional",
+          "EXTRACTION METHOD: " + (p._method || "unknown"),
+          "TOTAL LINES: " + allLines.length,
           "",
           "----- rows that look like line items (" + itemish.length + ") -----",
-          ...itemish.slice(0, 30),
+          ...(itemish.length ? itemish.slice(0, 30) : ["(none found)"]),
+          "",
+          "----- first 25 lines -----",
+          ...allLines.slice(0, 25),
         ].join("\n");
         return res.status(400).json({
           error: sample
