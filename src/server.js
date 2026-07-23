@@ -340,6 +340,7 @@ api.post("/import/preview", upload.single("file"), async (req, res) => {
         const allLines = String(p._text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
         const itemish = allLines.filter((l) => /\d{3,}/.test(l) && /[A-Za-z]/.test(l) && !/^(proforma|buyer|payment|delivery|port|our banker|forwarder|manufacturer|ship date|ex-factory|account|swift|ifsc)/i.test(l));
         const sample = [
+          "----- extraction method: " + (p._method || "unknown") + " -----",
           "----- first 25 lines -----",
           ...allLines.slice(0, 25),
           "",

@@ -2,6 +2,8 @@
 // No AI service required — the PDFs your ERP produces contain real text.
 let pdfParse = null;
 try { pdfParse = require("pdf-parse"); } catch (e) { pdfParse = null; }
+let positional = null;
+try { positional = require("./pdfPositional"); } catch (e) { positional = null; }
 
 function normDate(v) {
   const s = String(v == null ? "" : v).trim();
@@ -217,12 +219,38 @@ function parseInvoiceText(text) {
 }
 
 async function parseInvoicePdf(buffer) {
-  if (!pdfParse) throw new Error("PDF support isn't available on this server");
-  const data = await pdfParse(buffer);
-  if (!data || !data.text || !data.text.trim()) {
-    throw new Error("This PDF has no readable text — it may be a scan. Please use the Excel export instead.");
+  const attempts = [];
+
+  // 1) Positional extraction — rebuilds the invoice's visual rows. Best for table layouts.
+  if (positional) {
+    try {
+      const text = await positional.extractTextByPosition(buffer);
+      if (text && text.trim()) {
+        const parsed = parseInvoiceText(text);
+        parsed._method = "positional";
+        if (parsed.skus.length) return parsed;
+        attempts.push(parsed);
+      }
+    } catch (e) { attempts.push({ skus: [], _text: "", _method: "positional failed: " + e.message }); }
   }
-  return parseInvoiceText(data.text);
+
+  // 2) Plain text extraction as a fallback.
+  if (pdfParse) {
+    try {
+      const data = await pdfParse(buffer);
+      if (data && data.text && data.text.trim()) {
+        const parsed = parseInvoiceText(data.text);
+        parsed._method = "plain text";
+        if (parsed.skus.length) return parsed;
+        attempts.push(parsed);
+      }
+    } catch (e) { attempts.push({ skus: [], _text: "", _method: "plain text failed: " + e.message }); }
+  }
+
+  if (!attempts.length) throw new Error("PDF support isn't available on this server");
+  // Return the attempt that produced the most text, so the diagnostic is useful.
+  attempts.sort((a, b) => String(b._text || "").length - String(a._text || "").length);
+  return attempts[0];
 }
 
 module.exports = { parseInvoicePdf, parseInvoiceText };
