@@ -7,6 +7,7 @@ const multer = require("multer");
 const XLSX = require("xlsx");
 const { parseInvoiceXlsx } = require("./invoiceParser");
 const { parseInvoicePdf } = require("./pdfParser");
+const alerts = require("./alerts");
 const D = require("./db");
 const db = D.db;
 
@@ -59,7 +60,7 @@ api.post("/companies", (req, res) => {
 });
 api.patch("/companies/:id", (req, res) => {
   const sets = [], vals = [];
-  ["name", "short_name", "archived"].forEach((k) => { if (k in req.body) { sets.push(`${k} = ?`); vals.push(req.body[k]); } });
+  ["name", "short_name", "archived", "alert_emails"].forEach((k) => { if (k in req.body) { sets.push(`${k} = ?`); vals.push(req.body[k]); } });
   if (sets.length) { vals.push(req.params.id); db.prepare(`UPDATE companies SET ${sets.join(", ")} WHERE id = ?`).run(...vals); }
   res.json({ ok: true });
 });
@@ -95,18 +96,22 @@ api.delete("/vendors/:id", (req, res) => {
   res.json({ ok: true });
 });
 
-api.get("/buyers", (req, res) => res.json(db.prepare("SELECT * FROM buyers WHERE company_id IS ? ORDER BY name").all(req.companyId)));
+api.get("/buyers", (req, res) => res.json(db.prepare(`SELECT b.*, c.name AS coordinator_name, c.email AS coordinator_email
+  FROM buyers b LEFT JOIN coordinators c ON c.id = b.coordinator_id
+  WHERE b.company_id IS ? ORDER BY b.name`).all(req.companyId)));
 api.post("/buyers", (req, res) => {
-  const { name, address, contact, email, phone, notes } = req.body;
+  const { name, address, contact, email, phone, notes, coordinator_name, coordinator_email, coordinator_phone } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: "Name required" });
   try {
-    const r = db.prepare("INSERT INTO buyers (name,address,contact,email,phone,notes,company_id) VALUES (?,?,?,?,?,?,?)")
-      .run(name.trim(), address || "", contact || "", email || "", phone || "", notes || "", req.companyId);
+    const r = db.prepare(`INSERT INTO buyers (name,address,contact,email,phone,notes,company_id,
+      coordinator_name,coordinator_email,coordinator_phone) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(name.trim(), address || "", contact || "", email || "", phone || "", notes || "", req.companyId,
+        coordinator_name || "", coordinator_email || "", coordinator_phone || "");
     res.json(db.prepare("SELECT * FROM buyers WHERE id = ?").get(r.lastInsertRowid));
   } catch (e) { res.status(400).json({ error: "A buyer with that name already exists" }); }
 });
 api.patch("/buyers/:id", (req, res) => {
-  const allowed = ["name", "address", "contact", "email", "phone", "notes"];
+  const allowed = ["name", "address", "contact", "email", "phone", "notes", "coordinator_id"];
   const sets = [], vals = [];
   allowed.forEach((k) => { if (k in req.body) { sets.push(`${k} = ?`); vals.push(req.body[k]); } });
   if (!sets.length) return res.json({ ok: true });
@@ -227,6 +232,128 @@ api.post("/pis/:id/skus", (req, res) => {
   const r = db.prepare("INSERT INTO skus (pi_id,item_no,buyer_no,description,qty) VALUES (?,?,?,?,?)")
     .run(req.params.id, String(item_no).trim(), buyer_no || "", description || "", parseInt(qty, 10) || 0);
   res.json({ id: r.lastInsertRowid });
+});
+
+// ---------- backup ----------
+api.get("/export/backup.json", (req, res) => {
+  const dump = {};
+  ["companies","buyers","vendors","pis","skus","sku_vendors"].forEach((t) => {
+    dump[t] = db.prepare(`SELECT * FROM ${t}`).all();
+  });
+  dump._meta = { app: "pi-production-tracker", version: 1, taken_at: new Date().toISOString() };
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Content-Disposition", `attachment; filename="pi-tracker-backup-${D.todayISO()}.json"`);
+  res.send(JSON.stringify(dump, null, 2));
+});
+
+api.post("/import/backup", (req, res) => {
+  const dump = req.body && req.body.dump;
+  if (!dump || !dump._meta || dump._meta.app !== "pi-production-tracker") {
+    return res.status(400).json({ error: "That doesn't look like a PI Tracker backup file" });
+  }
+  const tables = ["sku_vendors","skus","pis","vendors","buyers","companies"];
+  try {
+    db.transaction(() => {
+      tables.forEach((t) => db.prepare(`DELETE FROM ${t}`).run());
+      ["companies","buyers","vendors","pis","skus","sku_vendors"].forEach((t) => {
+        (dump[t] || []).forEach((row) => {
+          const cols = Object.keys(row);
+          const ph = cols.map(() => "?").join(",");
+          db.prepare(`INSERT INTO ${t} (${cols.join(",")}) VALUES (${ph})`).run(...cols.map((c) => row[c]));
+        });
+      });
+    })();
+    res.json({ ok: true, restored: Object.fromEntries(["companies","buyers","vendors","pis","skus","sku_vendors"].map((t) => [t, (dump[t] || []).length])) });
+  } catch (e) { res.status(500).json({ error: "Restore failed: " + e.message }); }
+});
+
+// ---------- coordinators ----------
+api.get("/coordinators", (req, res) =>
+  res.json(db.prepare("SELECT * FROM coordinators WHERE company_id IS ? AND archived = 0 ORDER BY name").all(req.companyId)));
+api.post("/coordinators", (req, res) => {
+  const { name, email, phone, notes } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: "Name required" });
+  const r = db.prepare("INSERT INTO coordinators (company_id,name,email,phone,notes) VALUES (?,?,?,?,?)")
+    .run(req.companyId, name.trim(), email || "", phone || "", notes || "");
+  res.json(db.prepare("SELECT * FROM coordinators WHERE id = ?").get(r.lastInsertRowid));
+});
+api.patch("/coordinators/:id", (req, res) => {
+  const sets = [], vals = [];
+  ["name","email","phone","notes","archived"].forEach((k) => { if (k in req.body) { sets.push(`${k} = ?`); vals.push(req.body[k]); } });
+  if (sets.length) { vals.push(req.params.id); db.prepare(`UPDATE coordinators SET ${sets.join(", ")} WHERE id = ?`).run(...vals); }
+  res.json({ ok: true });
+});
+api.delete("/coordinators/:id", (req, res) => {
+  db.prepare("UPDATE buyers SET coordinator_id = NULL WHERE coordinator_id = ?").run(req.params.id);
+  db.prepare("DELETE FROM coordinators WHERE id = ?").run(req.params.id);
+  res.json({ ok: true });
+});
+
+// extra people who receive the daily digest
+api.get("/alert-recipients", (req, res) => {
+  const row = db.prepare("SELECT value FROM app_settings WHERE key = ?").get("alert_recipients_" + req.companyId);
+  res.json({ recipients: row && row.value ? JSON.parse(row.value) : [] });
+});
+api.post("/alert-recipients", (req, res) => {
+  const list = Array.isArray(req.body.recipients) ? req.body.recipients.filter((e) => /\S+@\S+\.\S+/.test(e)) : [];
+  db.prepare("INSERT INTO app_settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    .run("alert_recipients_" + req.companyId, JSON.stringify(list));
+  res.json({ ok: true, recipients: list });
+});
+
+// ---------- coordinators (office owners for each buyer) ----------
+api.get("/coordinators", (req, res) =>
+  res.json(db.prepare("SELECT * FROM coordinators WHERE company_id IS ? ORDER BY name").all(req.companyId)));
+api.post("/coordinators", (req, res) => {
+  const { name, email, phone, always_notify } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: "Name required" });
+  const r = db.prepare("INSERT INTO coordinators (name,email,phone,always_notify,company_id) VALUES (?,?,?,?,?)")
+    .run(name.trim(), email || "", phone || "", always_notify ? 1 : 0, req.companyId);
+  res.json(db.prepare("SELECT * FROM coordinators WHERE id = ?").get(r.lastInsertRowid));
+});
+api.patch("/coordinators/:id", (req, res) => {
+  const sets = [], vals = [];
+  ["name","email","phone","always_notify","notes"].forEach((k) => { if (k in req.body) { sets.push(`${k} = ?`); vals.push(req.body[k]); } });
+  if (sets.length) { vals.push(req.params.id); db.prepare(`UPDATE coordinators SET ${sets.join(", ")} WHERE id = ?`).run(...vals); }
+  res.json({ ok: true });
+});
+api.delete("/coordinators/:id", (req, res) => {
+  db.prepare("UPDATE buyers SET coordinator_id = NULL WHERE coordinator_id = ?").run(req.params.id);
+  db.prepare("DELETE FROM coordinators WHERE id = ?").run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---------- daily digest ----------
+api.get("/digest", (req, res) => {
+  const c = db.prepare("SELECT * FROM companies WHERE id = ?").get(req.companyId) || {};
+  const r = alerts.recipientsFor(req.companyId);
+  res.json({ ...alerts.buildDigest(req.companyId), company: c.name || "",
+    alert_emails: c.alert_emails || "", email_configured: alerts.mailerReady(),
+    recipients: { full: r.full, coordinators: r.coordinators.map((x) => ({ name: x.name, email: x.email, buyers: x.buyerIds.length })) } });
+});
+api.post("/digest/send", async (req, res) => {
+  const c = db.prepare("SELECT name FROM companies WHERE id = ?").get(req.companyId) || {};
+  try { res.json(await alerts.sendDigest(req.companyId, c.name)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---------- search ----------
+api.get("/search", (req, res) => {
+  const q = String(req.query.q || "").trim();
+  if (q.length < 2) return res.json({ pis: [], skus: [], buyers: [], vendors: [] });
+  const like = "%" + q.toLowerCase() + "%";
+  const cid = req.companyId;
+  const pis = db.prepare(`SELECT p.id, p.pi_no, p.po_no, p.pi_date, b.name AS buyer_name
+    FROM pis p LEFT JOIN buyers b ON b.id = p.buyer_id
+    WHERE p.company_id IS ? AND (lower(p.pi_no) LIKE ? OR lower(p.po_no) LIKE ? OR lower(COALESCE(b.name,'')) LIKE ?)
+    ORDER BY p.id DESC LIMIT 25`).all(cid, like, like, like);
+  const skus = db.prepare(`SELECT s.id, s.item_no, s.buyer_no, s.description, s.qty, s.pi_id, p.pi_no
+    FROM skus s JOIN pis p ON p.id = s.pi_id
+    WHERE p.company_id IS ? AND (lower(s.item_no) LIKE ? OR lower(COALESCE(s.buyer_no,'')) LIKE ? OR lower(COALESCE(s.description,'')) LIKE ?)
+    ORDER BY s.item_no LIMIT 40`).all(cid, like, like, like);
+  const buyers = db.prepare(`SELECT id, name, contact, email FROM buyers WHERE company_id IS ? AND lower(name) LIKE ? LIMIT 15`).all(cid, like);
+  const vendors = db.prepare(`SELECT id, name, lead_time_days FROM vendors WHERE company_id IS ? AND lower(name) LIKE ? LIMIT 15`).all(cid, like);
+  res.json({ pis, skus, buyers, vendors });
 });
 
 api.get("/late", (req, res) => {
@@ -708,6 +835,8 @@ api.post("/import/commit", (req, res) => {
 // ---------- static ----------
 app.use(express.static(path.join(__dirname, "..", "public")));
 app.get("*", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "index.html")));
+
+alerts.startScheduler();
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log("\n  PI Production Tracker running");

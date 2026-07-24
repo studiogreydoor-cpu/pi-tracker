@@ -1,0 +1,11 @@
+{
+  "name": "PI Production Tracker",
+  "short_name": "PI Tracker",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F5F1E8",
+  "theme_color": "#1F4D36",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

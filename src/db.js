@@ -12,14 +12,41 @@ db.exec(`
 CREATE TABLE IF NOT EXISTS companies (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
+  alert_emails TEXT DEFAULT '',
   short_name TEXT DEFAULT '',
   accent TEXT DEFAULT '',
   archived INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS coordinators (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id INTEGER,
+  name TEXT NOT NULL,
+  email TEXT DEFAULT '',
+  phone TEXT DEFAULT '',
+  notes TEXT DEFAULT '',
+  archived INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS coordinators (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id INTEGER,
+  name TEXT NOT NULL,
+  email TEXT DEFAULT '',
+  phone TEXT DEFAULT '',
+  always_notify INTEGER DEFAULT 0,
+  notes TEXT DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS buyers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   company_id INTEGER,
+  coordinator_id INTEGER,
   name TEXT NOT NULL,
   address TEXT DEFAULT '',
   contact TEXT DEFAULT '',
@@ -99,7 +126,17 @@ CREATE INDEX IF NOT EXISTS idx_skus_item ON skus(item_no);
 function hasCol(table, col) {
   return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
 }
-["pis", "vendors", "buyers"].forEach((t) => {
+if (!hasCol("buyers", "coordinator_id")) {
+  try { db.exec("ALTER TABLE buyers ADD COLUMN coordinator_id INTEGER"); } catch (e) {}
+}
+[["buyers","coordinator_name"],["buyers","coordinator_email"],["buyers","coordinator_phone"],
+ ["companies","alert_emails"]].forEach(([t, c]) => {
+  if (!hasCol(t, c)) { try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} TEXT DEFAULT ''`); } catch (e) {} }
+});
+if (!hasCol("buyers", "coordinator_id")) {
+  try { db.exec("ALTER TABLE buyers ADD COLUMN coordinator_id INTEGER"); } catch (e) {}
+}
+["pis", "vendors", "buyers", "coordinators"].forEach((t) => {
   if (!hasCol(t, "company_id")) {
     try { db.exec(`ALTER TABLE ${t} ADD COLUMN company_id INTEGER`); } catch (e) {}
   }
@@ -110,7 +147,7 @@ if (!firstCompany) {
   const id = db.prepare("INSERT INTO companies (name, short_name) VALUES (?,?)").run("My Company", "MC").lastInsertRowid;
   firstCompany = db.prepare("SELECT * FROM companies WHERE id = ?").get(id);
 }
-["pis", "vendors", "buyers"].forEach((t) => {
+["pis", "vendors", "buyers", "coordinators"].forEach((t) => {
   db.prepare(`UPDATE ${t} SET company_id = ? WHERE company_id IS NULL`).run(firstCompany.id);
 });
 

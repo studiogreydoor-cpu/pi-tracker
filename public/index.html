@@ -3,7 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Grey Door Studio · Production</title>
+<title>PI Production Tracker</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#1F4D36">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="apple-touch-icon" href="/icon.svg">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
@@ -202,6 +207,7 @@
       <button data-t="insights" onclick="go('insights')"><span class="ic">◔</span> Insights</button>
       <button data-t="buyers" onclick="go('buyers')"><span class="ic">✦</span> Buyers</button>
       <button data-t="import" onclick="go('import')"><span class="ic">↑</span> Import PI</button>
+      <button data-t="settings" onclick="go('settings')"><span class="ic">⚙</span> Settings</button>
     </nav>
     <div class="foot"><button onclick="logout()">Sign out</button></div>
   </aside>
@@ -212,7 +218,10 @@
         <button class="menu-btn" onclick="toggleNav(true)">☰</button>
         <div><h1 id="ptitle">Dashboard</h1><div class="sub" id="psub"></div></div>
       </div>
-      <div id="pactions"></div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input id="gsearch" placeholder="Search items, PIs, buyers…" style="width:230px" oninput="debouncedSearch(this.value)">
+        <div id="pactions"></div>
+      </div>
     </div>
     <div id="msg"></div>
     <div id="view"></div>
@@ -221,7 +230,7 @@
 
 <script>
 const $=(s)=>document.querySelector(s);
-let TAB="dashboard", VENDORS=[], BUYERS=[], OPEN_PI=null, IMPORT=null, CHARTS=[], ITEM_FILTER="all", ITEM_COLOR="status", COMPANIES=[], ACTIVE_C=null;
+let TAB="dashboard", VENDORS=[], BUYERS=[], COORDS=[], OPEN_PI=null, IMPORT=null, CHARTS=[], ITEM_FILTER="all", ITEM_COLOR="status", COMPANIES=[], ACTIVE_C=null;
 const VCOLORS=["#1F4D36","#C08A2E","#2E6B4A","#B5651D","#4A7C59","#8A6D3B","#356859","#A67C00"];
 const vendorColor=(id)=>VCOLORS[(Number(id)||0)%VCOLORS.length];
 
@@ -290,9 +299,9 @@ async function renameCompany(){
 function go(t){
   TAB=t;OPEN_PI=(t==="orders")?OPEN_PI:null;destroyCharts();toggleNav(false);
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on",b.dataset.t===t));
-  const titles={dashboard:["Dashboard","Live overview of production"],orders:["Orders","Proforma invoices and their progress"],items:["Items","Every SKU, its vendors and due dates"],vendors:["Vendors","Schedules, calendars and work orders"],insights:["Insights","Charts and trends"],buyers:["Buyers","Your customer directory"],import:["Import PI","Read a proforma invoice from your ERP"]};
+  const titles={dashboard:["Dashboard","Live overview of production"],orders:["Orders","Proforma invoices and their progress"],items:["Items","Every SKU, its vendors and due dates"],vendors:["Vendors","Schedules, calendars and work orders"],insights:["Insights","Charts and trends"],buyers:["Buyers","Your customer directory"],import:["Import PI","Read a proforma invoice from your ERP"],settings:["Settings","Backups, alerts and data"]};
   $("#ptitle").textContent=titles[t][0];$("#psub").textContent=titles[t][1];$("#pactions").innerHTML="";
-  ({dashboard:viewDashboard,orders:viewOrders,items:viewItems,vendors:viewVendors,buyers:viewBuyers,import:viewImport,insights:viewInsights}[t])();
+  ({dashboard:viewDashboard,orders:viewOrders,items:viewItems,vendors:viewVendors,buyers:viewBuyers,import:viewImport,insights:viewInsights,settings:viewSettings}[t])();
 }
 
 async function viewDashboard(){
@@ -717,26 +726,34 @@ async function viewBuyers(){
   $("#pactions").innerHTML=`<button class="btn" onclick="showBuyerForm()">+ Add buyer</button>`;
   BUYERS=await api("/buyers");
   $("#view").innerHTML=`<div id="bform"></div>
-    <div class="tablewrap"><table><thead><tr><th>Name</th><th>Contact</th><th>Email</th><th>Phone</th><th>Address</th></tr></thead>
+    <div class="sub" style="margin-bottom:10px">The <b>coordinator</b> is the person in your office responsible for this buyer's orders. They receive a daily email of what's overdue for their buyers only.</div>
+    <div class="tablewrap"><table><thead><tr>
+      <th>Buyer</th><th>Coordinator</th><th>Coordinator email</th><th>Coordinator phone</th>
+      <th>Buyer contact</th><th>Buyer email</th><th>Phone</th><th>Address</th></tr></thead>
     <tbody>${BUYERS.map(b=>`<tr>
       <td><input value="${esc(b.name)}" onchange="saveBuyer(${b.id},'name',this.value)" style="min-width:150px"></td>
+      <td><input value="${esc(b.coordinator_name||"")}" placeholder="Office contact" onchange="saveBuyer(${b.id},'coordinator_name',this.value)" style="min-width:120px"></td>
+      <td><input value="${esc(b.coordinator_email||"")}" placeholder="name@yourcompany.com" onchange="saveBuyer(${b.id},'coordinator_email',this.value)" style="min-width:180px"></td>
+      <td><input value="${esc(b.coordinator_phone||"")}" onchange="saveBuyer(${b.id},'coordinator_phone',this.value)"></td>
       <td><input value="${esc(b.contact||"")}" onchange="saveBuyer(${b.id},'contact',this.value)"></td>
       <td><input value="${esc(b.email||"")}" onchange="saveBuyer(${b.id},'email',this.value)"></td>
       <td><input value="${esc(b.phone||"")}" onchange="saveBuyer(${b.id},'phone',this.value)"></td>
-      <td><input value="${esc(b.address||"")}" onchange="saveBuyer(${b.id},'address',this.value)" style="min-width:200px"></td>
-    </tr>`).join("")||`<tr><td colspan="5" class="empty">No buyers yet.</td></tr>`}</tbody></table></div>`;
+      <td><input value="${esc(b.address||"")}" onchange="saveBuyer(${b.id},'address',this.value)" style="min-width:180px"></td>
+    </tr>`).join("")||`<tr><td colspan="8" class="empty">No buyers yet.</td></tr>`}</tbody></table></div>`;
 }
 function showBuyerForm(){
   $("#bform").innerHTML=`<div class="card" style="margin-bottom:16px"><div class="grid2">
     <div><label>Buyer name</label><input id="bn"></div>
-    <div><label>Contact person</label><input id="bc"></div>
+    <div><label>Coordinator (your office)</label><input id="bcn" placeholder="Who follows this buyer up"></div>
+    <div><label>Coordinator email</label><input id="bce" placeholder="name@yourcompany.com"></div>
+    <div><label>Contact person (buyer side)</label><input id="bc"></div>
     <div><label>Email</label><input id="be"></div>
     <div><label>Phone</label><input id="bp"></div>
     <div style="grid-column:1/-1"><label>Address</label><input id="ba"></div>
     <div style="display:flex;align-items:flex-end;gap:8px"><button class="btn" onclick="addBuyer()">Add</button><button class="btn ghost" onclick="$('#bform').innerHTML=''">Cancel</button></div>
   </div></div>`;
 }
-async function addBuyer(){try{await api("/buyers",{method:"POST",body:JSON.stringify({name:$("#bn").value,contact:$("#bc").value,email:$("#be").value,phone:$("#bp").value,address:$("#ba").value})});msg("Buyer added");viewBuyers();}catch(e){msg(e.message,"err");}}
+async function addBuyer(){try{await api("/buyers",{method:"POST",body:JSON.stringify({name:$("#bn").value,contact:$("#bc").value,email:$("#be").value,phone:$("#bp").value,address:$("#ba").value,coordinator_name:($("#bcn")||{}).value||"",coordinator_email:($("#bce")||{}).value||""})});msg("Buyer added");viewBuyers();}catch(e){msg(e.message,"err");}}
 async function saveBuyer(id,f,v){await api("/buyers/"+id,{method:"PATCH",body:JSON.stringify({[f]:v})});msg("Saved");}
 
 async function editSku(id){
@@ -776,6 +793,113 @@ async function editSku(id){
     wrap.querySelectorAll("[data-f]").forEach(el=>{const f=el.dataset.f;body[f]=el.type==="checkbox"?(el.checked?1:0):(el.value===""?null:el.value);});
     try{await api("/skus/"+id,{method:"PATCH",body:JSON.stringify(body)});wrap.remove();msg("Saved");viewPIDetail(OPEN_PI);}catch(e){msg(e.message,"err");}
   };
+}
+
+let searchTimer=null;
+function debouncedSearch(q){
+  clearTimeout(searchTimer);
+  searchTimer=setTimeout(()=>runSearch(q),280);
+}
+async function runSearch(q){
+  if(!q||q.trim().length<2){if(TAB==="search")go("orders");return;}
+  const r=await api("/search?q="+encodeURIComponent(q.trim()));
+  TAB="search";
+  document.querySelectorAll("#nav button").forEach(b=>b.classList.remove("on"));
+  $("#ptitle").textContent="Search";$("#psub").textContent=`Results for "${q.trim()}"`;$("#pactions").innerHTML="";
+  const sec=(title,rows,fmt)=>rows.length?`<div class="card" style="margin-bottom:14px">
+      <label>${title} (${rows.length})</label>
+      <div class="tablewrap" style="border:none"><table><tbody>${rows.map(fmt).join("")}</tbody></table></div></div>`:"";
+  $("#view").innerHTML=
+    sec("Items",r.skus,x=>`<tr style="cursor:pointer" onclick="openPI(${x.pi_id});go('orders')">
+        <td><b class="code">${esc(x.item_no)}</b></td><td class="desc">${esc(x.buyer_no||"")}</td>
+        <td class="desc">${esc(x.description||"")}</td><td>${x.qty}</td><td>PI ${esc(x.pi_no)}</td></tr>`)
+    + sec("Orders",r.pis,x=>`<tr style="cursor:pointer" onclick="openPI(${x.id});go('orders')">
+        <td><b>PI ${esc(x.pi_no)}</b></td><td class="desc">${esc(x.buyer_name||"")}</td>
+        <td class="desc">PO ${esc(x.po_no||"—")}</td><td class="desc">${dmy(x.pi_date)}</td></tr>`)
+    + sec("Buyers",r.buyers,x=>`<tr onclick="go('buyers')" style="cursor:pointer"><td><b>${esc(x.name)}</b></td><td class="desc">${esc(x.contact||"")}</td><td class="desc">${esc(x.email||"")}</td></tr>`)
+    + sec("Vendors",r.vendors,x=>`<tr onclick="go('vendors')" style="cursor:pointer"><td><b>${esc(x.name)}</b></td><td class="desc">${x.lead_time_days?x.lead_time_days+" day lead":""}</td></tr>`)
+    || `<div class="card empty">Nothing found for "${esc(q)}".</div>`;
+}
+
+async function viewSettings(){
+  $("#view").innerHTML=`<div class="empty">Loading…</div>`;
+  const dg=await api("/digest");
+  $("#view").innerHTML=`
+    <div class="card" style="margin-bottom:16px">
+      <h3 style="font-family:'Fraunces',serif;font-weight:600;font-size:16px;margin:0 0 6px;color:var(--green)">Backup your data</h3>
+      <p class="sub" style="margin:0 0 12px">Downloads everything — companies, orders, SKUs, vendors, buyers and all received/return figures — as a single file. Keep a copy somewhere safe.</p>
+      <div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center">
+        <a class="btn" href="/api/export/backup.json" style="text-decoration:none">Download backup</a>
+        <label class="btn ghost" style="cursor:pointer;margin:0">Restore from backup
+          <input type="file" accept=".json" style="display:none" onchange="restoreBackup(this.files[0])"></label>
+      </div>
+      <div class="desc" style="margin-top:9px">Restoring <b>replaces everything</b> currently in the app.</div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h3 style="font-family:'Fraunces',serif;font-weight:600;font-size:16px;margin:0 0 6px;color:var(--green)">Who gets the daily email — ${esc(dg.company||"this company")}</h3>
+      <p class="sub" style="margin:0 0 10px">These addresses receive the full digest for this company. Separate several with commas. Each company has its own list.</p>
+      <input id="alertemails" value="${esc(dg.alert_emails||"")}" placeholder="you@company.com, manager@company.com">
+      <button class="btn" style="margin-top:10px" onclick="saveAlertEmails()">Save recipients</button>
+      ${dg.recipients&&dg.recipients.coordinators.length?`
+        <div style="margin-top:14px"><label>Coordinators who also receive their own buyers' overdue list</label>
+        <div style="display:flex;gap:7px;flex-wrap:wrap">${dg.recipients.coordinators.map(c=>`<span class="vchip vok">${esc(c.name||c.email)} · ${c.buyers} buyer${c.buyers===1?"":"s"}</span>`).join("")}</div></div>`
+        :`<div class="desc" style="margin-top:12px">No coordinators set yet — add them on the Buyers page.</div>`}
+    </div>
+
+    <div class="card">
+      <h3 style="font-family:'Fraunces',serif;font-weight:600;font-size:16px;margin:0 0 6px;color:var(--green)">Daily digest</h3>
+      <p class="sub" style="margin:0 0 12px">${dg.email_configured
+        ? "Email alerts are switched on — a digest is sent automatically each morning."
+        : "Email isn't configured yet, so the digest lives here in the app. Add the SMTP settings on your host to receive it by email each morning."}</p>
+      <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px">
+        <button class="btn ghost" onclick="viewSettings()">Refresh</button>
+        ${dg.email_configured?`<button class="btn" onclick="sendDigest()">Send now</button>`:""}
+      </div>
+      <div class="tiles" style="margin-bottom:14px">
+        <div class="tile late"><div class="edge"></div><div class="k">Overdue</div><div class="v">${dg.overdue.length}</div></div>
+        <div class="tile brass"><div class="edge"></div><div class="k">Due in 7 days</div><div class="v">${dg.dueSoon.length}</div></div>
+        <div class="tile"><div class="edge"></div><div class="k">Open SKUs</div><div class="v">${dg.totals.open_skus}</div></div>
+        <div class="tile"><div class="edge"></div><div class="k">Pieces due</div><div class="v">${dg.totals.pieces_due.toLocaleString("en-IN")}</div></div>
+      </div>
+      ${dg.overdue.length?`<label>Overdue</label><div class="tablewrap" style="margin-bottom:12px"><table>
+        <thead><tr><th>Item</th><th>PI / Buyer</th><th>Coordinator</th><th>Still due</th><th>Late by</th><th>Vendor</th></tr></thead>
+        <tbody>${dg.overdue.map(r=>`<tr class="rail row-red"><td class="code">${esc(r.item)}</td>
+          <td>PI ${esc(r.pi)}<div class="desc">${esc(r.buyer||"")}</div></td>
+          <td class="desc">${esc(r.coordinator||"—")}</td>
+          <td>${r.still_due}</td><td style="color:var(--late);font-weight:700">${Math.abs(r.days)}d</td>
+          <td class="desc">${esc(r.late_vendors.join(", "))}</td></tr>`).join("")}</tbody></table></div>`:""}
+      ${dg.dueSoon.length?`<label>Due in the next 7 days</label><div class="tablewrap"><table>
+        <thead><tr><th>Item</th><th>PI / Buyer</th><th>Coordinator</th><th>Still due</th><th>When</th><th>Vendor</th></tr></thead>
+        <tbody>${dg.dueSoon.map(r=>`<tr class="rail row-amber"><td class="code">${esc(r.item)}</td>
+          <td>PI ${esc(r.pi)}<div class="desc">${esc(r.buyer||"")}</div></td>
+          <td class="desc">${esc(r.coordinator||"—")}</td>
+          <td>${r.still_due}</td><td>${r.days===0?"today":r.days===1?"tomorrow":"in "+r.days+" days"}</td>
+          <td class="desc">${esc(r.vendors.join(", "))}</td></tr>`).join("")}</tbody></table></div>`:""}
+    </div>`;
+}
+async function saveAlertEmails(){
+  const v=$("#alertemails").value;
+  try{await api(`/companies/${ACTIVE_C}`,{method:"PATCH",body:JSON.stringify({alert_emails:v})});msg("Recipients saved");viewSettings();}
+  catch(e){msg(e.message,"err");}
+}
+async function sendDigest(){
+  try{const r=await api("/digest/send",{method:"POST"});
+    msg(r.sent?`Digest emailed to ${(r.recipients||[]).length} recipient(s) — ${r.overdue} overdue`:`Not sent: ${r.reason}`,r.sent?"ok":"err");}
+  catch(e){msg(e.message,"err");}
+}
+async function restoreBackup(file){
+  if(!file)return;
+  if(!confirm("Restoring replaces ALL current data in this app with the contents of the backup file.\n\nContinue?"))return;
+  try{
+    const text=await file.text();
+    const dump=JSON.parse(text);
+    const r=await api("/import/backup",{method:"POST",body:JSON.stringify({dump})});
+    msg("Restored: "+Object.entries(r.restored).map(([k,v])=>`${v} ${k}`).join(", "));
+    const c=await api("/companies");COMPANIES=c.companies;ACTIVE_C=c.active;renderCSwitch();
+    [VENDORS,BUYERS]=await Promise.all([api("/vendors"),api("/buyers")]);
+    go("dashboard");
+  }catch(e){msg("Restore failed: "+e.message,"err");}
 }
 
 function viewImport(){

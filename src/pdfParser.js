@@ -52,6 +52,12 @@ function parseInvoiceText(text) {
 
   let pi = "", po = "", piDate = "", exf = "", ship = "";
 
+  // "PI No. 213" style
+  const piNoLine = clean.find((l) => /\bp\.?i\.?\s*no\.?\s*[:#]?\s*\S/i.test(l));
+  if (piNoLine) {
+    const m = piNoLine.match(/\bp\.?i\.?\s*no\.?\s*[:#]?\s*([A-Za-z0-9\-/]+)/i);
+    if (m) pi = m[1];
+  }
   const piLine = clean.find((l) => /proforma\s*#/i.test(l));
   if (piLine) {
     const n = piLine.match(/proforma\s*#\s*[:]?\s*(\d[\w\-/]*)/i);
@@ -63,6 +69,20 @@ function parseInvoiceText(text) {
   if (poLine) {
     const n = poLine.match(/buyer\s*order\s*#\s*[:]?\s*([A-Za-z0-9][\w\-/]*)/i);
     if (n && !/^date$/i.test(n[1])) po = n[1];
+    if (!po) {
+      // value sits on a following line
+      const idx = clean.indexOf(poLine);
+      for (let k = idx + 1; k < Math.min(idx + 5, clean.length); k++) {
+        const t = clean[k];
+        if (!t || /^(payment terms|ship date|tt|date)$/i.test(t)) continue;
+        if (pi && t === pi) continue;          // that is the PI number, not the PO
+        if (/^[A-Za-z0-9][\w\-/,]*$/.test(t) && /\d/.test(t)) { po = t; break; }
+      }
+    }
+  }
+  if (!po) {
+    const ordLine = clean.find((l) => /^order\s*#/i.test(l));
+    if (ordLine) { const m = ordLine.match(/^order\s*#\s*[:]?\s*(\S+)/i); if (m) po = m[1]; }
   }
   const exfLine = clean.find((l) => /ex[- ]?factory/i.test(l));
   if (exfLine) { const d = exfLine.match(/(\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4})/); if (d) exf = normDate(d[1]); }
@@ -90,9 +110,11 @@ function parseInvoiceText(text) {
 
   // --- buyer block ---
   let buyer = "", addr = [];
+  const msLine = clean.find((l) => /^m\/s\s+\S/i.test(l));
+  if (msLine) buyer = msLine.replace(/^m\/s\s+/i, "").trim();
   const stopBank = (t) => /(bank|swift|ifsc|account\s*no)/i.test(t);
   // shape (a): a standalone "Buyer" heading, buyer details follow in the left column
-  let bIdx = clean.findIndex((l) => /^buyer\s*:?$/i.test(l));
+  let bIdx = buyer ? -1 : clean.findIndex((l) => /^buyer\s*:?$/i.test(l));
   if (bIdx >= 0) {
     for (let i = bIdx + 1; i < Math.min(bIdx + 14, clean.length); i++) {
       const t = clean[i];
@@ -139,7 +161,28 @@ function parseInvoiceText(text) {
     /[A-Za-z]/.test(t) && /\d/.test(t) && t.length >= 3 && t.length <= 20 && !/^\d+$/.test(t);
   const skipLine = (t) => /^(item no|total|amount in|continued|proforma|page|for grey|authorised|signature|please send|buyer order|ship date|ex-factory|payment terms|delivery terms|port of|our banker|forwarder|partshipment|manufacturer|picture|packing|cbm|buyer no|total volume|us[. ]|five only)/i.test(t);
 
-  for (let li = 0; li < lines.length; li++) {
+  // Tax-invoice style: "S.No.  ITEM No.  DESCRIPTION  HSN  QTY UNIT  RATE  AMOUNT"
+  const isGstStyle = /s\.?\s*no\.?/i.test(text) && /\bhsn\b/i.test(text);
+  if (isGstStyle) {
+    const gst = /^\s*(\d{1,3})\s+([A-Za-z0-9][\w\-/]*(?:\s+[A-Z])?)\s+(.*?)\s+(\d{6,8})\s+([\d,]+)\s*(pcs?|sets?|nos?|pairs?)\b/i;
+    for (const raw of lines) {
+      const line = raw.replace(/\t/g, " ").replace(/\s{2,}/g, " ").trim();
+      if (!line) continue;
+      const m = line.match(gst);
+      if (!m) continue;
+      const itemNo = m[2].trim();
+      const desc = (m[3] || "").trim().replace(/[,\s]+$/, "");
+      const qty = parseInt(m[5].replace(/,/g, ""), 10);
+      if (!qty || !itemNo) continue;
+      const key = itemNo + "|" + qty + "|" + desc;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      skus.push({ item_no: itemNo, buyer_no: "", description: desc, qty });
+    }
+  }
+
+  const gstFound = skus.length > 0;
+  for (let li = 0; li < lines.length && !gstFound; li++) {
     let line = lines[li].replace(/\t/g, " ").trim();
     if (!line || skipLine(line)) continue;
     if (!/^\d{3,}/.test(line)) continue;                       // must start with an item code

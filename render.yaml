@@ -2,16 +2,29 @@ services:
   - type: web
     name: pi-tracker
     runtime: node
-    plan: starter
+    plan: starter                 # Starter keeps the app awake AND allows the disk below
     buildCommand: npm install
     startCommand: node src/server.js
     envVars:
       - key: APP_PASSWORD
-        sync: false
+        sync: false               # you set this in the Render dashboard
       - key: APP_SECRET
         generateValue: true
       - key: DATA_DIR
-        value: /var/data
+        value: /var/data          # database lives on the persistent disk
+      # --- optional: daily email digest ---
+      - key: ALERT_TO
+        sync: false               # where the digest is sent, e.g. you@company.com
+      - key: ALERT_HOUR
+        value: "8"
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
     disk:
       name: tracker-data
       mountPath: /var/data
