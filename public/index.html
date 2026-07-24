@@ -188,6 +188,9 @@
     <label>Password</label>
     <input id="pw" type="password" onkeydown="if(event.key==='Enter')login()" autofocus>
     <button class="btn" style="width:100%;margin-top:12px" onclick="login()">Sign in</button>
+    <div style="text-align:center;margin-top:12px">
+      <button onclick="forgotPassword()" style="background:none;border:none;color:var(--muted);font-size:12.5px;cursor:pointer;font-family:inherit;text-decoration:underline">Forgot password?</button>
+    </div>
   </div>
 </div>
 
@@ -257,6 +260,39 @@ function rowClass(s){return s?("row-"+(s==="overdue"?"red":s)):"";}
 function barEl(pct,color){return `<div class="bar"><span style="width:${pct}%${color?`;background:${color}`:""}"></span></div>`;}
 
 function showLogin(){$("#login").style.display="grid";$("#app").style.display="none";}
+async function forgotPassword(){
+  try{
+    const r=await fetch("/api/forgot-password",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({origin:location.origin})});
+    const j=await r.json();
+    $("#loginErr").innerHTML=j.sent
+      ? `<div class="msg ok">Reset link sent to ${esc(j.hint||"your recovery address")}. It expires in 30 minutes.</div>`
+      : `<div class="msg err">Couldn't send the email${j.reason?": "+esc(j.reason):""}. Ask whoever set up the server to add the SMTP settings.</div>`;
+  }catch(e){$("#loginErr").innerHTML=`<div class="msg err">${esc(e.message)}</div>`;}
+}
+function showResetForm(token){
+  $("#login").style.display="grid";$("#app").style.display="none";
+  $("#login").innerHTML=`<div class="box card">
+    <div class="brand" style="border:none;margin:0 0 10px;padding:0">
+      <div class="mark">PI</div><div><b>Choose a new password</b><span>Password reset</span></div></div>
+    <div id="rerr"></div>
+    <label>New password</label><input id="np1" type="password" placeholder="at least 6 characters">
+    <label style="margin-top:10px">Repeat new password</label><input id="np2" type="password">
+    <button class="btn" style="width:100%;margin-top:12px" onclick="doReset('${token}')">Save new password</button>
+  </div>`;
+}
+async function doReset(token){
+  const a=$("#np1").value,b=$("#np2").value;
+  if(a!==b){$("#rerr").innerHTML=`<div class="msg err">Those two passwords don't match.</div>`;return;}
+  try{
+    const r=await fetch("/api/reset-password",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({token,password:a})});
+    const j=await r.json();
+    if(!r.ok)throw new Error(j.error);
+    history.replaceState({},"",location.pathname);
+    location.reload();
+  }catch(e){$("#rerr").innerHTML=`<div class="msg err">${esc(e.message)}</div>`;}
+}
 async function login(){try{await api("/login",{method:"POST",body:JSON.stringify({password:$("#pw").value})});$("#loginErr").innerHTML="";boot();}catch(e){$("#loginErr").innerHTML=`<div class="msg err">${esc(e.message)}</div>`;}}
 async function logout(){await fetch("/api/logout",{method:"POST"});showLogin();}
 function toggleNav(open){$("#side").classList.toggle("open",open);$("#backdrop").classList.toggle("show",open);}
@@ -823,8 +859,28 @@ async function runSearch(q){
 
 async function viewSettings(){
   $("#view").innerHTML=`<div class="empty">Loading…</div>`;
-  const dg=await api("/digest");
+  const [dg,bk,ac]=await Promise.all([api("/digest"),api("/backups"),api("/account")]);
   $("#view").innerHTML=`
+    <div class="card" style="margin-bottom:16px">
+      <h3 style="font-family:'Fraunces',serif;font-weight:600;font-size:16px;margin:0 0 6px;color:var(--green)">Password &amp; recovery</h3>
+      <p class="sub" style="margin:0 0 12px">Change your sign-in password, and set where reset links are sent.</p>
+      <div class="grid2" style="margin-bottom:10px">
+        <div><label>Current password</label><input id="pw_cur" type="password"></div>
+        <div><label>New password</label><input id="pw_new" type="password" placeholder="at least 6 characters"></div>
+        <div><label>Repeat new password</label><input id="pw_new2" type="password"></div>
+        <div style="display:flex;align-items:flex-end"><button class="btn" style="width:100%" onclick="changePassword()">Change password</button></div>
+      </div>
+      <div class="grid2">
+        <div style="grid-column:1/-1"><label>Recovery email (reset links go here)</label>
+          <div style="display:flex;gap:8px">
+            <input id="rec_email" value="${esc(ac.recovery_email||"")}" placeholder="you@company.com">
+            <button class="btn ghost" style="white-space:nowrap" onclick="saveRecovery()">Save</button>
+          </div>
+          <div class="desc" style="margin-top:6px">${ac.email_configured?"Email is configured — resets will be delivered.":"Email isn't configured on the server yet, so reset links can't be sent. Add the SMTP settings to enable it."}</div>
+        </div>
+      </div>
+    </div>
+
     <div class="card" style="margin-bottom:16px">
       <h3 style="font-family:'Fraunces',serif;font-weight:600;font-size:16px;margin:0 0 6px;color:var(--green)">Backup your data</h3>
       <p class="sub" style="margin:0 0 12px">Downloads everything — companies, orders, SKUs, vendors, buyers and all received/return figures — as a single file. Keep a copy somewhere safe.</p>
@@ -834,6 +890,21 @@ async function viewSettings(){
           <input type="file" accept=".json" style="display:none" onchange="restoreBackup(this.files[0])"></label>
       </div>
       <div class="desc" style="margin-top:9px">Restoring <b>replaces everything</b> currently in the app.</div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h3 style="font-family:'Fraunces',serif;font-weight:600;font-size:16px;margin:0 0 6px;color:var(--green)">Automatic snapshots</h3>
+      <p class="sub" style="margin:0 0 12px">A snapshot is saved on the server every day and kept for ${bk.keep_days} days. ${bk.email_configured?"A copy is emailed to you every week.":"Configure email to also receive a weekly copy."}</p>
+      <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:12px">
+        <button class="btn ghost" onclick="snapshotNow()">Take snapshot now</button>
+        ${bk.email_configured?`<button class="btn ghost" onclick="emailBackupNow()">Email me a backup now</button>`:""}
+      </div>
+      ${bk.snapshots.length?`<div class="tablewrap" style="max-height:240px"><table>
+        <thead><tr><th>Snapshot</th><th>Date</th><th>Size</th><th></th></tr></thead>
+        <tbody>${bk.snapshots.map(x=>`<tr><td class="code">${esc(x.name)}</td><td>${dmy(x.taken)}</td>
+          <td class="desc">${Math.round(x.size/1024)} KB</td>
+          <td><a class="btn tiny ghost" href="/api/backups/${encodeURIComponent(x.name)}" style="text-decoration:none">Download</a></td></tr>`).join("")}
+        </tbody></table></div>`:`<div class="desc">No snapshots yet — the first one is written within a couple of minutes of the app starting.</div>`}
     </div>
 
     <div class="card" style="margin-bottom:16px">
@@ -881,6 +952,29 @@ async function viewSettings(){
 async function saveAlertEmails(){
   const v=$("#alertemails").value;
   try{await api(`/companies/${ACTIVE_C}`,{method:"PATCH",body:JSON.stringify({alert_emails:v})});msg("Recipients saved");viewSettings();}
+  catch(e){msg(e.message,"err");}
+}
+async function changePassword(){
+  const cur=$("#pw_cur").value,a=$("#pw_new").value,b=$("#pw_new2").value;
+  if(!cur){msg("Enter your current password","err");return;}
+  if(a!==b){msg("The new passwords don't match","err");return;}
+  if(!a||a.length<6){msg("New password must be at least 6 characters","err");return;}
+  try{await api("/account/password",{method:"POST",body:JSON.stringify({current:cur,next:a})});
+    msg("Password changed — it applies from now on");$("#pw_cur").value=$("#pw_new").value=$("#pw_new2").value="";}
+  catch(e){msg(e.message,"err");}
+}
+async function saveRecovery(){
+  try{const r=await api("/account/recovery-email",{method:"POST",body:JSON.stringify({email:$("#rec_email").value})});
+    msg("Recovery email saved: "+r.recovery_email);}
+  catch(e){msg(e.message,"err");}
+}
+async function snapshotNow(){
+  try{const r=await api("/backups/now",{method:"POST"});msg("Snapshot saved: "+r.name);viewSettings();}
+  catch(e){msg(e.message,"err");}
+}
+async function emailBackupNow(){
+  try{const r=await api("/backups/email",{method:"POST"});
+    msg(r.sent?`Backup emailed (${r.snapshot})`:`Not sent: ${r.reason}`,r.sent?"ok":"err");viewSettings();}
   catch(e){msg(e.message,"err");}
 }
 async function sendDigest(){
@@ -1033,7 +1127,8 @@ async function commit(allowDuplicate){
   finally{if(btn){btn.disabled=false;btn.textContent="Import this PI";}}
 }
 
-boot();
+const _rt=new URLSearchParams(location.search).get("reset");
+if(_rt)showResetForm(_rt);else boot();
 </script>
 </body>
 </html>

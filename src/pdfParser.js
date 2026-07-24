@@ -186,8 +186,10 @@ function parseInvoiceText(text) {
     let line = lines[li].replace(/\t/g, " ").trim();
     if (!line || skipLine(line)) continue;
     if (!/^\d{3,}/.test(line)) continue;                       // must start with an item code
-    const hasUnit = /(pcs?|sets?|nos?|pairs?|ctns?)\b/i.test(line);
-    if (!hasUnit && !/^\d[\w\-/]*\s/.test(line)) continue;
+    // A genuine line item always carries a unit (Pc / Set / Nos / Pair).
+    if (!/(pcs?|sets?|nos?|pairs?)\b/i.test(line)) continue;
+    // Guard against address and contact lines that also begin with digits.
+    if (/\b(ave|avenue|suite|street|st\.|road|rd\.|lane|floor|block|sector|phone|tel|fax|mobile|gstin|iec|swift|ifsc|a\/c|account|pin|zip|tn\d|po box)\b/i.test(line)) continue;
     line = unglue(line);
 
     let tokens = line.split(/\s+/);
@@ -241,7 +243,22 @@ function parseInvoiceText(text) {
       }
     }
 
-    const description = descParts.join(" ").replace(/\s{2,}/g, " ").replace(/[,\s]+$/, "").trim();
+    let description = descParts.join(" ").replace(/\s{2,}/g, " ").replace(/[,\s]+$/, "").trim();
+    // Some layouts put the description on the lines below the item row.
+    if (!description) {
+      const bits = [];
+      for (let k = li + 1; k < Math.min(li + 7, lines.length); k++) {
+        const nxt = (lines[k] || "").trim();
+        if (!nxt) continue;
+        if (/^\d{3,}/.test(nxt) && /(pcs?|sets?|nos?|pairs?)\b/i.test(nxt)) break;  // next item
+        if (/^(buyer\s*no|total\s*ctns|packing|cbm|total\b)/i.test(nxt)) continue;
+        if (looksLikeBuyerCode(nxt)) continue;
+        if (!/[A-Za-z]{3}/.test(nxt)) continue;
+        bits.push(nxt.replace(/\s{2,}/g, " ").replace(/\s*[\d.,]+\s*$/, "").trim());
+        if (bits.join(" ").length > 60) break;
+      }
+      description = bits.join(" ").replace(/[,\s]+$/, "").trim();
+    }
     const key = itemNo + "|" + qty;
     if (seen.has(key)) continue;
     seen.add(key);

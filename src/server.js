@@ -8,13 +8,12 @@ const XLSX = require("xlsx");
 const { parseInvoiceXlsx } = require("./invoiceParser");
 const { parseInvoicePdf } = require("./pdfParser");
 const alerts = require("./alerts");
+const backups = require("./backups");
+const auth = require("./auth");
 const D = require("./db");
 const db = D.db;
 
 const PORT = process.env.PORT || 3000;
-const PASSWORD = process.env.APP_PASSWORD || "changeme";
-const SECRET = process.env.APP_SECRET || "pi-tracker-secret";
-const token = () => crypto.createHmac("sha256", SECRET).update(PASSWORD).digest("hex");
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
@@ -23,14 +22,32 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 
 // ---------- auth ----------
 app.post("/api/login", (req, res) => {
-  if ((req.body.password || "") !== PASSWORD) return res.status(401).json({ error: "Wrong password" });
-  res.cookie("auth", token(), { httpOnly: true, sameSite: "lax", maxAge: 30 * 864e5 });
+  if (!auth.verifyPassword(req.body.password || "")) return res.status(401).json({ error: "Wrong password" });
+  res.cookie("auth", auth.sessionToken(), { httpOnly: true, sameSite: "lax", maxAge: 30 * 864e5 });
+  res.json({ ok: true });
+});
+
+// --- password reset (these must work without being signed in) ---
+app.post("/api/forgot-password", async (req, res) => {
+  const base = (req.body && req.body.origin) || (req.protocol + "://" + req.get("host"));
+  try {
+    const out = await auth.sendResetEmail(base);
+    // Always answer the same way, so this can't be used to probe the address.
+    res.json({ ok: true, sent: out.sent, hint: out.sent ? out.to : null, reason: out.reason || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/api/reset-password", (req, res) => {
+  const { token: t, password } = req.body || {};
+  if (!password || String(password).length < 6) return res.status(400).json({ error: "Choose a password of at least 6 characters" });
+  if (!auth.consumeResetToken(t)) return res.status(400).json({ error: "That reset link has expired or already been used" });
+  auth.setPassword(password);
+  res.clearCookie("auth");
   res.json({ ok: true });
 });
 app.post("/api/logout", (req, res) => { res.clearCookie("auth"); res.json({ ok: true }); });
 
 function requireAuth(req, res, next) {
-  if (req.cookies.auth === token()) return next();
+  if (req.cookies.auth === auth.sessionToken()) return next();
   res.status(401).json({ error: "Not logged in" });
 }
 const api = express.Router();
@@ -299,6 +316,47 @@ api.post("/alert-recipients", (req, res) => {
   db.prepare("INSERT INTO app_settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
     .run("alert_recipients_" + req.companyId, JSON.stringify(list));
   res.json({ ok: true, recipients: list });
+});
+
+// ---------- account ----------
+api.get("/account", (req, res) => res.json({
+  recovery_email: auth.recoveryEmail(),
+  password_set: auth.hasStoredPassword(),
+  email_configured: auth.mailerReady(),
+}));
+api.post("/account/password", (req, res) => {
+  const { current, next } = req.body || {};
+  if (!auth.verifyPassword(current || "")) return res.status(401).json({ error: "Current password is incorrect" });
+  if (!next || String(next).length < 6) return res.status(400).json({ error: "Choose a new password of at least 6 characters" });
+  auth.setPassword(next);
+  res.cookie("auth", auth.sessionToken(), { httpOnly: true, sameSite: "lax", maxAge: 30 * 864e5 });
+  res.json({ ok: true });
+});
+api.post("/account/recovery-email", (req, res) => {
+  const email = String((req.body || {}).email || "").trim();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: "Enter a valid email address" });
+  auth.setRecoveryEmail(email);
+  res.json({ ok: true, recovery_email: email });
+});
+
+// ---------- automatic snapshots ----------
+api.get("/backups", (req, res) => res.json({
+  snapshots: backups.listSnapshots(),
+  email_configured: alerts.mailerReady(),
+  keep_days: Number(process.env.BACKUP_KEEP || 30),
+}));
+api.get("/backups/:name", (req, res) => {
+  const p = backups.snapshotPath(req.params.name);
+  if (!p) return res.status(404).json({ error: "Snapshot not found" });
+  res.download(p, req.params.name);
+});
+api.post("/backups/now", (req, res) => {
+  try { res.json({ ok: true, ...backups.writeSnapshot() }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+api.post("/backups/email", async (req, res) => {
+  try { res.json(await backups.emailBackup("Manual backup")); }
+  catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ---------- coordinators (office owners for each buyer) ----------
@@ -573,16 +631,40 @@ function guess(headers, candidates) {
 // Which of your companies does this document belong to? Match company names against the text.
 function detectCompany(text) {
   const norm = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-  const hay = norm(text);
-  if (!hay) return null;
+  const raw = String(text || "");
+  if (!raw.trim()) return null;
+  // Email addresses and web domains often carry a sister company's name
+  // (e.g. an Amara invoice showing romi@xebecsails.in), so strip them first.
+  const cleaned = raw
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, " ")
+    .replace(/\b(?:https?:\/\/)?(?:www\.)?[A-Za-z0-9-]+\.(?:com|in|net|org|co|co\.in)\b/gi, " ");
+  const lines = cleaned.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const list = db.prepare("SELECT * FROM companies WHERE archived = 0").all();
+
+  // 1) strongest signal: the company name on a line of its own (the letterhead)
+  for (const c of list) {
+    const n = norm(c.name);
+    if (n.length < 3) continue;
+    if (lines.some((l) => norm(l) === n)) return c;
+  }
+  // 2) next: appears right after a "Manufacturer & Exporter" / "For <company>" marker
+  const headArea = norm(lines.slice(0, 45).join(" "));
   let best = null;
-  list.forEach((c) => {
+  for (const c of list) {
+    const n = norm(c.name);
+    if (n.length >= 4 && headArea.includes(n)) {
+      if (!best || n.length > norm(best.name).length) best = c;
+    }
+  }
+  if (best) return best;
+  // 3) fallback: anywhere in the cleaned document
+  const hay = norm(cleaned);
+  for (const c of list) {
     const n = norm(c.name);
     if (n.length >= 4 && hay.includes(n)) {
-      if (!best || n.length > norm(best.name).length) best = c;   // prefer the longest match
+      if (!best || n.length > norm(best.name).length) best = c;
     }
-  });
+  }
   return best;
 }
 
@@ -837,6 +919,7 @@ app.use(express.static(path.join(__dirname, "..", "public")));
 app.get("*", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "index.html")));
 
 alerts.startScheduler();
+backups.startBackupScheduler();
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log("\n  PI Production Tracker running");
