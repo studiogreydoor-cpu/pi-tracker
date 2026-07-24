@@ -373,13 +373,17 @@ async function viewInsights(){
     options:{plugins:{legend:{position:"right",labels:{boxWidth:12,padding:8}}},cutout:"62%",maintainAspectRatio:false}}));
 }
 
+let ORDER_SCOPE="open";
 async function viewOrders(){
   if(OPEN_PI)return viewPIDetail(OPEN_PI);
   $("#pactions").innerHTML=`<button class="btn" onclick="go('import')">+ Import PI</button>`;
   $("#view").innerHTML=`<div class="empty">Loading…</div>`;
-  const pis=await api("/pis");
-  if(!pis.length){$("#view").innerHTML=`<div class="card empty">No orders yet. <a href="#" onclick="go('import');return false" style="color:var(--brass);font-weight:600">Import your first PI →</a></div>`;return;}
-  $("#view").innerHTML=`<div class="charts" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
+  const pis=await api("/pis?scope="+ORDER_SCOPE);
+  const tabs=`<div class="chips">
+    ${[["open","Open orders"],["closed","Closed orders"],["all","All"]].map(t=>`<button class="${ORDER_SCOPE===t[0]?"on":""}" onclick="ORDER_SCOPE='${t[0]}';viewOrders()">${t[1]}</button>`).join("")}
+  </div>`;
+  if(!pis.length){$("#view").innerHTML=tabs+`<div class="card empty">${ORDER_SCOPE==="closed"?"No closed orders yet.":`No orders yet. <a href="#" onclick="go('import');return false" style="color:var(--brass);font-weight:600">Import your first PI →</a>`}</div>`;return;}
+  $("#view").innerHTML=tabs+`<div class="charts" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
     ${pis.map(p=>{
       const health=p.late_count?"red":p.progress_pct>=100?"done":p.progress_pct>0?"amber":"green";
       const hc={red:"var(--late)",amber:"var(--soon)",green:"var(--green)",done:"var(--faint)"}[health];
@@ -395,6 +399,9 @@ async function viewOrders(){
           <button class="btn tiny" onclick="event.stopPropagation();openPI(${p.id})">Open</button>
           <button class="btn tiny ghost" onclick="event.stopPropagation();editPI(${p.id})">Edit</button>
           <button class="btn tiny ghost" onclick="event.stopPropagation();completeAll(${p.id},'${esc(p.pi_no)}')">Complete all</button>
+          ${p.shipped
+            ? `<button class="btn tiny ghost" onclick="event.stopPropagation();reopenPI(${p.id})">Reopen</button>`
+            : `<button class="btn tiny ghost" onclick="event.stopPropagation();closePI(${p.id},'${esc(p.pi_no)}')">Close</button>`}
           <button class="btn tiny ghost" style="color:var(--late);border-color:var(--late-line)" onclick="event.stopPropagation();deletePI(${p.id},'${esc(p.pi_no)}')">Delete</button>
         </div>
       </div>`;}).join("")}
@@ -402,8 +409,17 @@ async function viewOrders(){
 }
 
 async function completeAll(id,piNo){
-  if(!confirm(`Mark every SKU in PI ${piNo} as complete?`))return;
-  try{await api(`/pis/${id}/complete-all`,{method:"POST"});msg(`PI ${piNo} marked complete`);viewOrders();}
+  if(!confirm(`Mark every SKU in PI ${piNo} as complete?\n\nReceived quantities will be filled in to match the ordered quantities.`))return;
+  try{const r=await api(`/pis/${id}/complete-all`,{method:"POST"});msg(`PI ${piNo}: ${r.count} SKUs completed and quantities filled`);viewOrders();}
+  catch(e){msg(e.message,"err");}
+}
+async function closePI(id,piNo){
+  if(!confirm(`Close PI ${piNo}? It moves to the Closed orders tab.`))return;
+  try{await api(`/pis/${id}/close`,{method:"POST"});msg(`PI ${piNo} closed`);viewOrders();}
+  catch(e){msg(e.message,"err");}
+}
+async function reopenPI(id){
+  try{await api(`/pis/${id}/reopen`,{method:"POST"});msg("Order reopened");viewOrders();}
   catch(e){msg(e.message,"err");}
 }
 async function deletePI(id,piNo){
@@ -430,6 +446,9 @@ async function editPI(id){
         <option value="">—</option>
         ${BUYERS.map(b=>`<option value="${b.id}"${p.buyer_id==b.id?" selected":""}>${esc(b.name)}</option>`).join("")}
       </select></div>
+      <div><label>Company</label><select data-f="company_id">
+        ${COMPANIES.map(c=>`<option value="${c.id}"${p.company_id==c.id?" selected":""}>${esc(c.name)}</option>`).join("")}
+      </select><div class="desc" style="margin-top:4px;font-size:11px">Moves this PI to another company</div></div>
     </div>
     <div style="margin-top:12px"><label>Notes</label><textarea data-f="notes" rows="2">${esc(p.notes||"")}</textarea></div>
     <button class="btn" style="width:100%;margin-top:16px" id="esave">Save changes</button>
@@ -463,7 +482,8 @@ async function viewPIDetail(id){
       <div class="tile ${pi.late_count?"late":""}"><div class="edge"></div><div class="k">Late SKUs</div><div class="v">${pi.late_count}</div></div>
     </div>
     <div class="sub" style="margin-bottom:10px">Each SKU lists its own vendors. Record what each vendor delivered and returned separately.</div>
-    <div id="skulist">${skus.map(skuBlock).join("")}</div>`;
+    <div id="skulist">${skus.map(skuBlock).join("")}</div>
+    <button class="btn ghost" style="margin-top:6px" onclick="addSku(${id})">+ Add SKU</button>`;
 }
 
 function skuBlock(s){
@@ -497,13 +517,14 @@ function skuBlock(s){
         <span class="code" style="font-size:15px">${esc(s.item_no)}</span>
         <span class="desc" style="margin-left:8px">${esc(s.buyer_no||"")}${s.description?" · "+esc(s.description):""}</span>
       </div>
-      <div class="skustats">
-        <span class="desc">qty <b style="color:var(--ink)">${s.qty}</b></span>
+      <div class="skustats" onclick="event.stopPropagation()">
+        <span class="desc">qty <input class="mini num" type="number" value="${s.qty}" title="Order quantity" onchange="setSku(${s.id},'qty',this.value)"></span>
         <span class="desc">in hand <b style="color:var(--ok)">${s.in_hand}</b></span>
         <span class="desc">due <b style="color:${s.still_due>0?"var(--late)":"var(--ok)"}">${s.still_due}</b></span>
         <span style="min-width:90px">${barEl(s.progress_pct)}</span>
         ${statusPill(s.status,s.days_left)}
-        <span class="chev" id="chev-${s.id}">▾</span>
+        <button class="btn tiny ghost" style="color:var(--late);border-color:var(--late-line)" title="Remove this SKU" onclick="deleteSku(${s.id},'${esc(s.item_no)}')">✕</button>
+        <span class="chev" id="chev-${s.id}" onclick="toggleSku(${s.id})" style="cursor:pointer">▾</span>
       </div>
     </div>
     <div class="skubody" id="body-${s.id}" style="display:${OPEN_SKUS.has(s.id)?"block":"none"}">
@@ -524,6 +545,19 @@ function skuBlock(s){
       </div>
     </div>
   </div>`;
+}
+
+async function deleteSku(id,itemNo){
+  if(!confirm(`Remove SKU ${itemNo} from this PI?\n\nIts vendor assignments and received quantities will be deleted.`))return;
+  try{await api("/skus/"+id,{method:"DELETE"});msg(`${itemNo} removed`);viewPIDetail(OPEN_PI);}
+  catch(e){msg(e.message,"err");}
+}
+async function addSku(piId){
+  const item=prompt("Item number:");if(!item||!item.trim())return;
+  const qty=prompt("Order quantity:","0");
+  try{await api(`/pis/${piId}/skus`,{method:"POST",body:JSON.stringify({item_no:item.trim(),qty:parseInt(qty,10)||0})});
+    msg("SKU added");viewPIDetail(piId);}
+  catch(e){msg(e.message,"err");}
 }
 
 let OPEN_SKUS=new Set();
@@ -759,8 +793,13 @@ async function preview(file){
     const r=await fetch("/api/import/preview",{method:"POST",body:fd});const j=await r.json();
     if(!r.ok){const err=new Error(j.error||"Could not read that file");err.sample=j.sample;throw err;}
     IMPORT=j;
+    const clist=j.companies||COMPANIES;
+    const detected=j.detected_company_name;
     const head=`<hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+      <div class="msg ${detected?"ok":""}" style="${detected?"":"display:none"}">Recognised <b>${esc(detected||"")}</b> on this invoice — filing it under that company.</div>
       <div class="grid2">
+        <div style="grid-column:1/-1"><label>Company (which of your businesses this PI belongs to)</label>
+          <select id="i_company">${clist.map(c=>`<option value="${c.id}"${j.detected_company_id==c.id?" selected":""}>${esc(c.name)}</option>`).join("")}</select></div>
         <div><label>PI number *</label><input id="i_pi" value="${esc(j.detected.pi_no)}"></div>
         <div><label>PO number</label><input id="i_po" value="${esc(j.detected.po_no)}"></div>
         <div><label>Buyer</label><input id="i_buyer" list="blist" value="${esc(j.detected.buyer)}"><datalist id="blist">${BUYERS.map(b=>`<option>${esc(b.name)}</option>`).join("")}</datalist></div>
@@ -801,20 +840,71 @@ async function preview(file){
     $("#prev").innerHTML=`<div class="msg err" style="margin-top:14px">${esc(e.message)}</div>`+extra;
   }
 }
+function showDiff(j,body){
+  const d=j.diff;
+  const wrap=document.createElement("div");
+  wrap.style.cssText="position:fixed;inset:0;background:rgba(20,26,18,.5);z-index:70;display:grid;place-items:center;padding:16px";
+  const rows=(list,cls,fmt)=>list.length?`<div class="tablewrap" style="max-height:170px;margin-bottom:10px"><table><tbody>
+      ${list.map(x=>`<tr class="rail ${cls}"><td>${fmt(x)}</td></tr>`).join("")}</tbody></table></div>`:"";
+  wrap.innerHTML=`<div class="card" style="max-width:560px;width:100%;max-height:88vh;overflow:auto">
+    <h3 style="font-family:'Fraunces',serif;font-weight:600;font-size:19px;margin:0 0 4px;color:var(--green)">PI already exists — update it?</h3>
+    <p class="sub" style="margin:0 0 14px">This PI is already in the system. Here's what this file would change. Vendors and received quantities on unchanged SKUs are kept.</p>
+    ${d.changed.length?`<label>Quantity changes (${d.changed.length})</label>${rows(d.changed,"row-amber",x=>`<b class="code">${esc(x.item_no)}</b> &nbsp; ${x.from} → <b>${x.to}</b>`)}`:""}
+    ${d.added.length?`<label>New SKUs to add (${d.added.length})</label>${rows(d.added,"row-green",x=>`<b class="code">${esc(x.item_no)}</b> &nbsp; qty ${x.qty}`)}`:""}
+    ${d.removed.length?`<label style="color:var(--late)">SKUs no longer on the PI — will be REMOVED (${d.removed.length})</label>
+      ${rows(d.removed,"row-red",x=>`<b class="code">${esc(x.item_no)}</b> &nbsp; qty ${x.qty}${x.received?` · <span style="color:var(--late)">${x.received} already received</span>`:""}`)}
+      <label class="cbx" style="margin:4px 0 12px"><input type="checkbox" id="dokeep"> Keep these SKUs instead of removing them</label>`:""}
+    <div class="desc" style="margin-bottom:14px">${d.unchanged} SKU${d.unchanged===1?"":"s"} unchanged.</div>
+    <div style="display:flex;gap:9px;flex-wrap:wrap">
+      <button class="btn" id="doupd">Update this PI</button>
+      <button class="btn ghost" id="donew">Import as a separate PI</button>
+      <button class="btn ghost" id="docancel">Cancel</button>
+    </div>
+  </div>`;
+  document.body.appendChild(wrap);
+  const close=()=>wrap.remove();
+  wrap.querySelector("#docancel").onclick=close;
+  wrap.onclick=(e)=>{if(e.target===wrap)close();};
+  wrap.querySelector("#donew").onclick=()=>{close();commit(true);};
+  wrap.querySelector("#doupd").onclick=async()=>{
+    const keep=wrap.querySelector("#dokeep");
+    close();
+    await commitUpdate(body,keep?!keep.checked:true);
+  };
+}
+async function commitUpdate(body,removeMissing){
+  try{
+    const r=await fetch("/api/import/commit",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({...body,updateExisting:true,removeMissing})});
+    const j=await r.json();
+    if(!r.ok)throw new Error(j.error);
+    msg(`PI updated — ${j.updated} quantities changed, ${j.inserted} added, ${j.deleted} removed`);
+    OPEN_PI=j.piId;ORDER_SCOPE="open";go("orders");
+  }catch(e){msg(e.message,"err");}
+}
+
 async function commit(allowDuplicate){
   const btn=$("#cbtn");if(btn){btn.disabled=true;btn.textContent="Importing…";}
   try{
     const body={importId:IMPORT.importId,allowDuplicate:!!allowDuplicate,
       pi:{pi_no:$("#i_pi").value,po_no:$("#i_po").value,buyer:$("#i_buyer").value,
           buyer_address:(IMPORT.detected&&IMPORT.detected.buyer_address)||"",
+          company_id:($("#i_company")?$("#i_company").value:null),
           pi_date:$("#i_date").value,ex_factory_date:$("#i_exf").value,ship_date:$("#i_ship").value}};
     if(IMPORT.mode==="table")body.mapping={item_no:$("#m_item").value,buyer_no:$("#m_buyerno").value,description:$("#m_desc").value,qty:$("#m_qty").value};
     const r=await fetch("/api/import/commit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const j=await r.json();
-    if(r.status===409){if(confirm(j.error+". Import again anyway?"))return commit(true);throw new Error("Import cancelled");}
+    if(r.status===409){
+      if(j.diff){showDiff(j,body);return;}
+      if(confirm(j.error+". Import again anyway?"))return commit(true);
+      throw new Error("Import cancelled");
+    }
     if(!r.ok)throw new Error(j.error);
-    BUYERS=await api("/buyers");msg(`Imported ${j.count} SKUs${j.carried?` · ${j.carried} reused earlier settings`:""}`);
-    OPEN_PI=j.piId;go("orders");
+    const chosen=$("#i_company")?Number($("#i_company").value):ACTIVE_C;
+    if(chosen&&chosen!==ACTIVE_C){await api(`/companies/${chosen}/activate`,{method:"POST"});ACTIVE_C=chosen;renderCSwitch();}
+    [VENDORS,BUYERS]=await Promise.all([api("/vendors"),api("/buyers")]);
+    msg(`Imported ${j.count} SKUs${j.carried?` · ${j.carried} reused earlier settings`:""}`);
+    OPEN_PI=j.piId;ORDER_SCOPE="open";go("orders");
   }catch(e){msg(e.message,"err");}
   finally{if(btn){btn.disabled=false;btn.textContent="Import this PI";}}
 }

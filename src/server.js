@@ -116,10 +116,24 @@ api.patch("/buyers/:id", (req, res) => {
 });
 
 // ---------- PIs & SKUs ----------
-api.get("/pis", (req, res) => res.json(D.getPIs({ includeShipped: req.query.all === "1", companyId: req.companyId })));
+api.get("/pis", (req, res) => {
+  const scope = req.query.scope || "open";   // open | closed | all
+  const rows = D.getPIs({ includeShipped: true, companyId: req.companyId });
+  if (scope === "all") return res.json(rows);
+  if (scope === "closed") return res.json(rows.filter((p) => p.shipped));
+  return res.json(rows.filter((p) => !p.shipped));
+});
+api.post("/pis/:id/close", (req, res) => {
+  db.prepare("UPDATE pis SET shipped = 1 WHERE id = ?").run(req.params.id);
+  res.json({ ok: true });
+});
+api.post("/pis/:id/reopen", (req, res) => {
+  db.prepare("UPDATE pis SET shipped = 0 WHERE id = ?").run(req.params.id);
+  res.json({ ok: true });
+});
 api.get("/pis/:id/skus", (req, res) => res.json(D.getSkusForPI(req.params.id)));
 api.patch("/pis/:id", (req, res) => {
-  const allowed = ["pi_no", "po_no", "buyer_id", "pi_date", "ex_factory_date", "ship_date", "packed", "shipped", "notes"];
+  const allowed = ["pi_no", "po_no", "buyer_id", "pi_date", "ex_factory_date", "ship_date", "packed", "shipped", "notes", "company_id"];
   const sets = [], vals = [];
   allowed.forEach((k) => { if (k in req.body) { sets.push(`${k} = ?`); vals.push(req.body[k]); } });
   if (sets.length) { vals.push(req.params.id); db.prepare(`UPDATE pis SET ${sets.join(", ")} WHERE id = ?`).run(...vals); }
@@ -129,8 +143,10 @@ api.patch("/pis/:id", (req, res) => {
   res.json({ ok: true });
 });
 api.post("/pis/:id/complete-all", (req, res) => {
+  const ids = db.prepare("SELECT id FROM skus WHERE pi_id = ?").all(req.params.id).map((r) => r.id);
   db.prepare("UPDATE skus SET complete = 1 WHERE pi_id = ?").run(req.params.id);
-  res.json({ ok: true });
+  ids.forEach(fillReceived);
+  res.json({ ok: true, count: ids.length });
 });
 api.post("/pis/:id/uncomplete-all", (req, res) => {
   db.prepare("UPDATE skus SET complete = 0 WHERE pi_id = ?").run(req.params.id);
@@ -148,10 +164,32 @@ const SKU_FIELDS = ["item_no","buyer_no","description","qty","gift_box","gift_bo
   "r1_qty","r1_date","r1_back_qty","r1_back_date","r2_qty","r2_date","r2_back_qty","r2_back_date",
   "r3_qty","r3_date","r3_back_qty","r3_back_date","complete","packed","shipped","notes"];
 
+// Fill a SKU's receipts so that its in-hand equals the ordered quantity.
+function fillReceived(skuId) {
+  const sku = db.prepare("SELECT * FROM skus WHERE id = ?").get(skuId);
+  if (!sku) return;
+  const qty = sku.qty || 0;
+  const assigns = db.prepare("SELECT * FROM sku_vendors WHERE sku_id = ? AND role = 'part'").all(skuId);
+  if (assigns.length) {
+    const upd = db.prepare("UPDATE sku_vendors SET received_qty = ?, received_date = COALESCE(received_date, ?) WHERE id = ?");
+    assigns.forEach((a) => {
+      const out = (a.r1_qty || 0) + (a.r2_qty || 0) + (a.r3_qty || 0);
+      const back = (a.r1_back_qty || 0) + (a.r2_back_qty || 0) + (a.r3_back_qty || 0);
+      upd.run(Math.max(0, qty - back + out), D.todayISO(), a.id);
+    });
+  } else {
+    const out = (sku.r1_qty || 0) + (sku.r2_qty || 0) + (sku.r3_qty || 0);
+    const back = (sku.r1_back_qty || 0) + (sku.r2_back_qty || 0) + (sku.r3_back_qty || 0);
+    db.prepare("UPDATE skus SET received_qty = ?, received_date = COALESCE(received_date, ?) WHERE id = ?")
+      .run(Math.max(0, qty - back + out), D.todayISO(), skuId);
+  }
+}
+
 api.patch("/skus/:id", (req, res) => {
   const sets = [], vals = [];
   SKU_FIELDS.forEach((k) => { if (k in req.body) { sets.push(`${k} = ?`); vals.push(req.body[k] === "" ? null : req.body[k]); } });
   if (sets.length) { vals.push(req.params.id); db.prepare(`UPDATE skus SET ${sets.join(", ")} WHERE id = ?`).run(...vals); }
+  if (Number(req.body.complete) === 1) fillReceived(req.params.id);
   const sku = db.prepare("SELECT * FROM skus WHERE id = ?").get(req.params.id);
   const pi = db.prepare("SELECT * FROM pis WHERE id = ?").get(sku.pi_id);
   res.json(D.decorateSku(sku, D.vendorsById(), pi));
@@ -176,6 +214,19 @@ api.patch("/assignments/:id", (req, res) => {
 api.delete("/assignments/:id", (req, res) => {
   db.prepare("DELETE FROM sku_vendors WHERE id = ?").run(req.params.id);
   res.json({ ok: true });
+});
+
+api.delete("/skus/:id", (req, res) => {
+  db.prepare("DELETE FROM sku_vendors WHERE sku_id = ?").run(req.params.id);
+  db.prepare("DELETE FROM skus WHERE id = ?").run(req.params.id);
+  res.json({ ok: true });
+});
+api.post("/pis/:id/skus", (req, res) => {
+  const { item_no, buyer_no, description, qty } = req.body;
+  if (!item_no || !String(item_no).trim()) return res.status(400).json({ error: "Item number required" });
+  const r = db.prepare("INSERT INTO skus (pi_id,item_no,buyer_no,description,qty) VALUES (?,?,?,?,?)")
+    .run(req.params.id, String(item_no).trim(), buyer_no || "", description || "", parseInt(qty, 10) || 0);
+  res.json({ id: r.lastInsertRowid });
 });
 
 api.get("/late", (req, res) => {
@@ -392,6 +443,22 @@ function guess(headers, candidates) {
   return "";
 }
 
+// Which of your companies does this document belong to? Match company names against the text.
+function detectCompany(text) {
+  const norm = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const hay = norm(text);
+  if (!hay) return null;
+  const list = db.prepare("SELECT * FROM companies WHERE archived = 0").all();
+  let best = null;
+  list.forEach((c) => {
+    const n = norm(c.name);
+    if (n.length >= 4 && hay.includes(n)) {
+      if (!best || n.length > norm(best.name).length) best = c;   // prefer the longest match
+    }
+  });
+  return best;
+}
+
 api.post("/import/preview", upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file received" });
   const isPdf = /\.pdf$/i.test(req.file.originalname || "") || req.file.mimetype === "application/pdf";
@@ -426,8 +493,12 @@ api.post("/import/preview", upload.single("file"), async (req, res) => {
       const importId = crypto.randomUUID();
       pending.set(importId, { mode: "invoice", skus: p.skus });
       setTimeout(() => pending.delete(importId), 30 * 60 * 1000);
+      const hit = detectCompany(p._text);
       return res.json({
         importId, mode: "invoice", source: "pdf", rowCount: p.skus.length, skus: p.skus,
+        companies: db.prepare("SELECT id, name FROM companies WHERE archived = 0 ORDER BY id").all(),
+        detected_company_id: hit ? hit.id : req.companyId,
+        detected_company_name: hit ? hit.name : null,
         detected: { pi_no: p.pi || "", po_no: p.po || "", buyer: p.buyer || "", buyer_address: p.buyer_address || "",
           pi_date: p.pi_date || null, ex_factory_date: p.ex_factory_date || null, ship_date: p.ship_date || null },
       });
@@ -442,9 +513,13 @@ api.post("/import/preview", upload.single("file"), async (req, res) => {
     const importId = crypto.randomUUID();
     pending.set(importId, { mode: "invoice", skus: inv.skus });
     setTimeout(() => pending.delete(importId), 30 * 60 * 1000);
+    const hitX = detectCompany(JSON.stringify(inv));
     return res.json({
       importId, mode: "invoice", rowCount: inv.skus.length,
       skus: inv.skus,
+      companies: db.prepare("SELECT id, name FROM companies WHERE archived = 0 ORDER BY id").all(),
+      detected_company_id: hitX ? hitX.id : req.companyId,
+      detected_company_name: hitX ? hitX.name : null,
       detected: {
         pi_no: inv.pi || "", po_no: inv.po || "", buyer: inv.buyer || "", buyer_address: inv.buyer_address || "",
         pi_date: inv.pi_date || null, ex_factory_date: inv.ex_factory_date || null, ship_date: inv.ship_date || null,
@@ -516,12 +591,85 @@ api.post("/import/commit", (req, res) => {
   items = items.filter((s) => s.item_no && s.qty > 0);
   if (!items.length) return res.status(400).json({ error: "No valid line items found in this file" });
 
-  const dupe = db.prepare("SELECT id FROM pis WHERE pi_no = ? AND company_id IS ?").get(String(pi.pi_no).trim(), req.companyId);
-  if (dupe && !req.body.allowDuplicate) {
-    return res.status(409).json({ error: "PI " + pi.pi_no + " already exists", existingId: dupe.id });
+  const dupe = db.prepare("SELECT id FROM pis WHERE pi_no = ? AND company_id IS ?").get(String(pi.pi_no).trim(), pi.company_id ? Number(pi.company_id) : req.companyId);
+
+  // Re-uploading an existing PI: work out exactly what changed, and let the user confirm.
+  if (dupe && !req.body.allowDuplicate && !req.body.updateExisting) {
+    const current = db.prepare("SELECT * FROM skus WHERE pi_id = ?").all(dupe.id);
+    const byItem = {};
+    current.forEach((c) => (byItem[String(c.item_no).trim().toLowerCase()] = c));
+    const incoming = {};
+    items.forEach((i) => (incoming[String(i.item_no).trim().toLowerCase()] = i));
+
+    const added = items.filter((i) => !byItem[String(i.item_no).trim().toLowerCase()])
+      .map((i) => ({ item_no: i.item_no, qty: i.qty }));
+    const changed = [];
+    const unchanged = [];
+    items.forEach((i) => {
+      const c = byItem[String(i.item_no).trim().toLowerCase()];
+      if (!c) return;
+      if ((c.qty || 0) !== i.qty) changed.push({ item_no: i.item_no, from: c.qty || 0, to: i.qty });
+      else unchanged.push(i.item_no);
+    });
+    const removed = current.filter((c) => !incoming[String(c.item_no).trim().toLowerCase()])
+      .map((c) => ({ item_no: c.item_no, qty: c.qty, received: c.received_qty || 0 }));
+
+    return res.status(409).json({
+      error: "PI " + pi.pi_no + " already exists",
+      existingId: dupe.id,
+      diff: { added, changed, removed, unchanged: unchanged.length },
+    });
   }
 
-  const buyerId = D.findOrCreateBuyer(pi.buyer, pi.buyer_address, req.companyId);
+  // Apply the update in place, keeping vendors and received figures for SKUs that stay.
+  if (dupe && req.body.updateExisting) {
+    const current = db.prepare("SELECT * FROM skus WHERE pi_id = ?").all(dupe.id);
+    const byItem = {};
+    current.forEach((c) => (byItem[String(c.item_no).trim().toLowerCase()] = c));
+    const incomingKeys = new Set(items.map((i) => String(i.item_no).trim().toLowerCase()));
+
+    const run = db.transaction(() => {
+      // header details refresh
+      const sets = { po_no: pi.po_no || "", pi_date: D.parseDate(pi.pi_date),
+        ex_factory_date: D.parseDate(pi.ex_factory_date), ship_date: D.parseDate(pi.ship_date) };
+      db.prepare("UPDATE pis SET po_no=?, pi_date=?, ex_factory_date=?, ship_date=? WHERE id=?")
+        .run(sets.po_no, sets.pi_date, sets.ex_factory_date, sets.ship_date, dupe.id);
+
+      let updated = 0, inserted = 0, deleted = 0;
+      items.forEach((i) => {
+        const c = byItem[String(i.item_no).trim().toLowerCase()];
+        if (c) {
+          if ((c.qty || 0) !== i.qty) {
+            db.prepare("UPDATE skus SET qty = ?, description = COALESCE(NULLIF(?,''), description), buyer_no = COALESCE(NULLIF(?,''), buyer_no) WHERE id = ?")
+              .run(i.qty, i.description || "", i.buyer_no || "", c.id);
+            updated++;
+          }
+        } else {
+          db.prepare("INSERT INTO skus (pi_id,item_no,buyer_no,description,qty) VALUES (?,?,?,?,?)")
+            .run(dupe.id, i.item_no, i.buyer_no || "", i.description || "", i.qty);
+          inserted++;
+        }
+      });
+      if (req.body.removeMissing !== false) {
+        current.forEach((c) => {
+          if (!incomingKeys.has(String(c.item_no).trim().toLowerCase())) {
+            db.prepare("DELETE FROM sku_vendors WHERE sku_id = ?").run(c.id);
+            db.prepare("DELETE FROM skus WHERE id = ?").run(c.id);
+            deleted++;
+          }
+        });
+      }
+      return { updated, inserted, deleted };
+    });
+    try {
+      const out = run();
+      pending.delete(importId);
+      return res.json({ ok: true, mode: "updated", piId: dupe.id, ...out });
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+  }
+
+  const targetCompany = pi.company_id ? Number(pi.company_id) : req.companyId;
+  const buyerId = D.findOrCreateBuyer(pi.buyer, pi.buyer_address, targetCompany);
   const insertPI = db.prepare(`INSERT INTO pis (pi_no,po_no,buyer_id,pi_date,ex_factory_date,ship_date,notes,company_id)
     VALUES (?,?,?,?,?,?,?,?)`);
   const insertSKU = db.prepare(`INSERT INTO skus
@@ -530,7 +678,7 @@ api.post("/import/commit", (req, res) => {
 
   const run = db.transaction(() => {
     const piId = insertPI.run(String(pi.pi_no).trim(), pi.po_no || "", buyerId,
-      D.parseDate(pi.pi_date), D.parseDate(pi.ex_factory_date), D.parseDate(pi.ship_date), pi.notes || "", req.companyId).lastInsertRowid;
+      D.parseDate(pi.pi_date), D.parseDate(pi.ex_factory_date), D.parseDate(pi.ship_date), pi.notes || "", targetCompany).lastInsertRowid;
     let count = 0, carried = 0;
     for (const s of items) {
       const prior = D.priorSettings(s.item_no, req.companyId);
